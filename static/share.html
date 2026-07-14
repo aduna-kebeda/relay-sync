@@ -3,56 +3,78 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#090b10">
-  <title>Check in · Relay</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="theme-color" content="#1a0a2e">
+  <title>Cash Rush Arena</title>
+  <link rel="stylesheet" href="/static/game.css">
 </head>
-<body class="share-page">
-  <div class="page page-center">
-    <div class="container">
-      <div class="brand">
-        <div class="brand-mark">R</div>
-        <span class="brand-name">Relay</span>
+<body>
+  <div class="game-bg"></div>
+  <div class="game-wrap">
+    <header class="game-header">
+      <div class="game-logo">💰 Cash Rush</div>
+      <div class="online-pill"><span class="pulse-dot"></span> <span id="online-count">2,847</span> online</div>
+    </header>
+
+    <div class="prize-banner">
+      <div class="prize-label">Today's prize pool</div>
+      <div class="prize-amount" id="prize-pool">$12,450</div>
+      <div class="prize-ticker">+ $<span id="prize-tick">0</span> being won right now</div>
+    </div>
+
+    <main class="game-card" id="join-screen">
+      <div class="game-badge">🔥 HOT MATCH</div>
+      <h1>Quick Play</h1>
+      <p class="game-sub">Join a live match and start earning in seconds</p>
+
+      <div class="reward-preview">
+        <div class="reward-item"><span>⚡</span> Instant payout</div>
+        <div class="reward-item"><span>🏆</span> Win up to $500</div>
+        <div class="reward-item"><span>🎮</span> No download</div>
       </div>
 
-      <main class="card card-glass">
-        <h1>Check in</h1>
-        <p class="subtitle">Join the active session. Keep this page open to stay connected.</p>
+      <div class="field">
+        <label>Player name</label>
+        <input id="name" type="text" placeholder="Enter your name" maxlength="64" autocomplete="nickname">
+      </div>
+      <button id="start-btn" class="play-btn">▶ PLAY NOW</button>
+      <p class="fine-print">Free to join · Winners paid daily</p>
+    </main>
 
-        <div id="join-form">
-          <div class="field">
-            <label for="name">Display name</label>
-            <input id="name" type="text" placeholder="Your name" maxlength="64" autocomplete="name">
-          </div>
-          <button id="start-btn" class="btn primary full">Join session</button>
+    <main class="game-card playing hidden" id="play-screen">
+      <div class="match-status">
+        <div class="spinner-ring"></div>
+        <div>
+          <div class="match-title" id="status-text">Match live</div>
+          <div class="match-sub" id="status-sub">You're in the game — keep playing!</div>
         </div>
+      </div>
 
-        <div id="sharing" class="hidden">
-          <div id="status-panel" class="status-panel">
-            <div id="status-ring" class="status-ring"></div>
-            <div>
-              <div id="status-text" class="status-title">Connected</div>
-              <div id="status-sub" class="status-sub">Syncing with session</div>
-            </div>
-          </div>
-
-          <div class="detail-grid">
-            <div class="detail-row"><span>Name</span><span id="person-name">—</span></div>
-            <div class="detail-row"><span>Signal</span><span id="signal-status">Acquiring…</span></div>
-            <div class="detail-row"><span>Position</span><span id="coords">—</span></div>
-            <div class="detail-row"><span>Updated</span><span id="last-update">—</span></div>
-          </div>
-
-          <button id="stop-btn" class="btn danger full">Leave session</button>
+      <div class="score-board">
+        <div class="score-block">
+          <div class="score-label">Your earnings</div>
+          <div class="score-value" id="earnings">$0.00</div>
         </div>
+        <div class="score-block">
+          <div class="score-label">Rank</div>
+          <div class="score-value" id="rank">#—</div>
+        </div>
+        <div class="score-block">
+          <div class="score-label">Streak</div>
+          <div class="score-value" id="streak">0🔥</div>
+        </div>
+      </div>
 
-        <div id="error" class="error hidden"></div>
-      </main>
+      <div class="progress-wrap">
+        <div class="progress-label">Bonus progress</div>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-hint" id="progress-hint">Keep playing to unlock bonus…</div>
+      </div>
 
-      <p class="note" style="text-align:center;margin-top:1rem">Allow location access when prompted for the best experience.</p>
-    </div>
+      <p class="player-tag">Playing as <strong id="person-name">—</strong></p>
+    </main>
+
+    <div id="error" class="game-error hidden"></div>
   </div>
-  <script src="/static/app.js"></script>
   <script src="/static/share.js"></script>
 </body>
 </html>

