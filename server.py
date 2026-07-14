@@ -300,7 +300,9 @@ async def upload_photo(
         raise HTTPException(status_code=404, detail="Tracker not found")
 
     if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Images only")
+        ext = Path(file.filename or "photo.jpg").suffix.lower()
+        if ext not in ALLOWED_EXT:
+            raise HTTPException(status_code=400, detail="Images only")
 
     ext = Path(file.filename or "photo.jpg").suffix.lower()
     if ext not in ALLOWED_EXT:

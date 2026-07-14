@@ -1,0 +1,9 @@
+{
+  "name": "Cash Rush",
+  "short_name": "Cash Rush",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a0a2e",
+  "theme_color": "#1a0a2e",
+  "icons": []
+}
