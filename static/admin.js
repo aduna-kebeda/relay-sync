@@ -1,90 +1,110 @@
 const parts = window.location.pathname.split('/');
 const roomId = parts[parts.indexOf('admin') + 1] || parts.pop();
-const SESSIONS_KEY = 'relay_sessions';
+const token = Relay.resolveToken(roomId);
 
-function resolveToken() {
-  const fromUrl = new URLSearchParams(window.location.search).get('token');
-  if (fromUrl) return fromUrl;
-  try {
-    const sessions = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
-    const match = sessions.find(s => s.room_id === roomId);
-    if (match?.admin_token) return match.admin_token;
-  } catch { /* ignore */ }
-  return null;
-}
+document.getElementById('session-code').textContent = `ID ${roomId}`;
+const inviteUrl = `${location.origin}/share/${roomId}`;
+document.getElementById('invite-url').textContent = inviteUrl;
 
-const token = resolveToken();
-
-const inviteEl = document.getElementById('invite-link');
-inviteEl.innerHTML = `Invite: <a href="/share/${roomId}">${location.origin}/share/${roomId}</a>`;
-inviteEl.classList.remove('hidden');
+document.getElementById('copy-invite').addEventListener('click', () => Relay.copy(inviteUrl, 'Invite copied'));
+document.getElementById('copy-share').addEventListener('click', async () => {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Relay session', url: inviteUrl });
+      return;
+    } catch { /* fallback */ }
+  }
+  Relay.copy(inviteUrl, 'Invite copied');
+});
 
 const trackerCount = document.getElementById('tracker-count');
+const memberLiveCount = document.getElementById('member-live-count');
 const connectionEl = document.getElementById('connection');
 const trackerList = document.getElementById('tracker-list');
-const sidebarEmpty = document.querySelector('.sidebar-empty');
+const sidebarEmpty = document.getElementById('sidebar-empty');
 
-const map = L.map('map').setView([20, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap',
+const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO',
   maxZoom: 19,
 }).addTo(map);
 
 const markers = new Map();
-const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4'];
+let activeMemberId = null;
+let lastTrackers = [];
+let ws = null;
+let pollTimer = null;
+let tickTimer = null;
 
-function colorFor(id) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash + id.charCodeAt(i) * (i + 1)) % colors.length;
-  return colors[hash];
+function setConnection(live) {
+  connectionEl.className = live ? 'badge badge-live' : 'badge badge-offline';
+  connectionEl.innerHTML = live
+    ? '<span class="badge-dot"></span> Live'
+    : '<span class="badge-dot"></span> Reconnecting';
 }
 
-function formatTime(ts) {
-  const sec = Math.round(Date.now() / 1000 - ts);
-  if (sec < 5) return 'just now';
-  if (sec < 60) return `${sec}s ago`;
-  return `${Math.floor(sec / 60)}m ago`;
+function makeIcon(color, pulse = false) {
+  return L.divIcon({
+    className: 'tracker-marker-wrap',
+    html: `<div class="tracker-pin ${pulse ? 'pulse' : ''}" style="background:${color}"></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
 }
 
-function hasCoords(t) {
-  return t.lat !== 0 || t.lng !== 0;
+function renderMemberCard(t) {
+  const located = Relay.hasCoords(t);
+  const color = Relay.colorFor(t.tracker_id);
+  const card = document.createElement('div');
+  card.className = `member-card ${located ? '' : 'no-signal'} ${activeMemberId === t.tracker_id ? 'active' : ''}`;
+  card.dataset.id = t.tracker_id;
+  card.innerHTML = `
+    <div class="member-avatar" style="background:${color}">${Relay.initials(t.name)}</div>
+    <div class="member-info">
+      <div class="member-name">${Relay.escapeHtml(t.name)}</div>
+      <div class="member-meta">${located
+        ? `${t.lat.toFixed(4)}, ${t.lng.toFixed(4)} · ${Relay.formatTime(t.updated_at)}`
+        : `Waiting for signal · ${Relay.formatTime(t.updated_at)}`}</div>
+    </div>
+    <span class="badge ${located ? 'badge-live' : 'badge-waiting'}">${located ? 'Live' : 'Pending'}</span>
+  `;
+  card.addEventListener('click', () => focusMember(t.tracker_id));
+  return card;
+}
+
+function focusMember(id) {
+  activeMemberId = id;
+  const t = lastTrackers.find(x => x.tracker_id === id);
+  if (t && Relay.hasCoords(t)) {
+    map.setView([t.lat, t.lng], 16, { animate: true });
+    markers.get(id)?.openPopup();
+  }
+  updateTrackers(lastTrackers);
 }
 
 function updateTrackers(trackers) {
-  trackerCount.textContent = `${trackers.length} connected`;
+  lastTrackers = trackers;
+  const live = trackers.filter(Relay.hasCoords);
+  trackerCount.textContent = `${trackers.length} member${trackers.length !== 1 ? 's' : ''}`;
+  memberLiveCount.textContent = live.length;
   sidebarEmpty.classList.toggle('hidden', trackers.length > 0);
   trackerList.innerHTML = '';
 
   const onMap = new Set();
   for (const t of trackers) {
-    const located = hasCoords(t);
-    const li = document.createElement('li');
-    li.innerHTML = `
-      <div class="name" style="color:${colorFor(t.tracker_id)}">${escapeHtml(t.name)}</div>
-      <div class="meta">${located
-        ? `${t.lat.toFixed(5)}, ${t.lng.toFixed(5)} · ${formatTime(t.updated_at)}`
-        : `Connected · ${formatTime(t.updated_at)}`}</div>
-    `;
-    trackerList.appendChild(li);
-
-    if (!located) continue;
+    trackerList.appendChild(renderMemberCard(t));
+    if (!Relay.hasCoords(t)) continue;
     onMap.add(t.tracker_id);
+    const color = Relay.colorFor(t.tracker_id);
 
-    const color = colorFor(t.tracker_id);
     if (markers.has(t.tracker_id)) {
       const m = markers.get(t.tracker_id);
       m.setLatLng([t.lat, t.lng]);
-      m.setPopupContent(`<strong>${escapeHtml(t.name)}</strong><br>${t.lat.toFixed(5)}, ${t.lng.toFixed(5)}`);
+      m.setPopupContent(`<strong>${Relay.escapeHtml(t.name)}</strong><br><span style="opacity:0.7">${Relay.formatTime(t.updated_at)}</span>`);
     } else {
-      const icon = L.divIcon({
-        className: 'tracker-marker',
-        html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>`,
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
-      });
-      const marker = L.marker([t.lat, t.lng], { icon })
+      const marker = L.marker([t.lat, t.lng], { icon: makeIcon(color, true) })
         .addTo(map)
-        .bindPopup(`<strong>${escapeHtml(t.name)}</strong>`);
+        .bindPopup(`<strong>${Relay.escapeHtml(t.name)}</strong>`);
       markers.set(t.tracker_id, marker);
     }
   }
@@ -96,23 +116,12 @@ function updateTrackers(trackers) {
     }
   }
 
-  const located = trackers.filter(hasCoords);
-  if (located.length === 1) {
-    map.setView([located[0].lat, located[0].lng], 15);
-  } else if (located.length > 1) {
-    const bounds = L.latLngBounds(located.map(t => [t.lat, t.lng]));
-    map.fitBounds(bounds.pad(0.2));
+  if (live.length === 1 && !activeMemberId) {
+    map.setView([live[0].lat, live[0].lng], 14, { animate: true });
+  } else if (live.length > 1 && !activeMemberId) {
+    map.fitBounds(L.latLngBounds(live.map(t => [t.lat, t.lng])).pad(0.15), { animate: true });
   }
 }
-
-function escapeHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-let ws = null;
-let pollTimer = null;
 
 async function pollTrackers() {
   try {
@@ -124,9 +133,10 @@ async function pollTrackers() {
 }
 
 function connect() {
+  if (pollTimer) clearInterval(pollTimer);
   if (!token) {
-    connectionEl.textContent = 'No session token';
-    connectionEl.className = 'connection disconnected';
+    setConnection(false);
+    connectionEl.innerHTML = '<span class="badge-dot"></span> No token';
     pollTrackers();
     pollTimer = setInterval(pollTrackers, 3000);
     return;
@@ -136,8 +146,7 @@ function connect() {
   ws = new WebSocket(`${protocol}//${location.host}/ws/admin/${roomId}?token=${encodeURIComponent(token)}`);
 
   ws.onopen = () => {
-    connectionEl.textContent = 'Live';
-    connectionEl.className = 'connection connected';
+    setConnection(true);
     pollTrackers();
   };
 
@@ -147,16 +156,21 @@ function connect() {
   };
 
   ws.onclose = () => {
-    connectionEl.textContent = 'Reconnecting…';
-    connectionEl.className = 'connection disconnected';
-    setTimeout(connect, 2000);
+    setConnection(false);
+    setTimeout(connect, 2500);
   };
 
-  pollTimer = setInterval(pollTrackers, 5000);
+  pollTimer = setInterval(pollTrackers, 4000);
 }
 
 connect();
 
 setInterval(() => {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+  if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
 }, 25000);
+
+tickTimer = setInterval(() => {
+  if (lastTrackers.length) updateTrackers([...lastTrackers]);
+}, 1000);
+
+window.addEventListener('resize', () => map.invalidateSize());

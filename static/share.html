@@ -3,32 +3,56 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Check in</title>
+  <meta name="theme-color" content="#090b10">
+  <title>Check in · Relay</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="share-page">
-  <main class="card">
-    <h1>Check in</h1>
-    <p class="subtitle">Join the session. Stay connected while this page is open.</p>
-
-    <div id="join-form">
-      <label for="name">Your name</label>
-      <input id="name" type="text" placeholder="e.g. Alex" maxlength="64" autocomplete="name">
-      <button id="start-btn" class="btn primary full">Join session</button>
-    </div>
-
-    <div id="sharing" class="hidden">
-      <div class="status sharing-active">
-        <span class="dot"></span>
-        <span id="status-text">Connected…</span>
+  <div class="page page-center">
+    <div class="container">
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <span class="brand-name">Relay</span>
       </div>
-      <p id="coords" class="coords"></p>
-      <p id="person-name" class="person-name"></p>
-      <button id="stop-btn" class="btn secondary full">Leave session</button>
-    </div>
 
-    <div id="error" class="error hidden"></div>
-  </main>
+      <main class="card card-glass">
+        <h1>Check in</h1>
+        <p class="subtitle">Join the active session. Keep this page open to stay connected.</p>
+
+        <div id="join-form">
+          <div class="field">
+            <label for="name">Display name</label>
+            <input id="name" type="text" placeholder="Your name" maxlength="64" autocomplete="name">
+          </div>
+          <button id="start-btn" class="btn primary full">Join session</button>
+        </div>
+
+        <div id="sharing" class="hidden">
+          <div id="status-panel" class="status-panel">
+            <div id="status-ring" class="status-ring"></div>
+            <div>
+              <div id="status-text" class="status-title">Connected</div>
+              <div id="status-sub" class="status-sub">Syncing with session</div>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="detail-row"><span>Name</span><span id="person-name">—</span></div>
+            <div class="detail-row"><span>Signal</span><span id="signal-status">Acquiring…</span></div>
+            <div class="detail-row"><span>Position</span><span id="coords">—</span></div>
+            <div class="detail-row"><span>Updated</span><span id="last-update">—</span></div>
+          </div>
+
+          <button id="stop-btn" class="btn danger full">Leave session</button>
+        </div>
+
+        <div id="error" class="error hidden"></div>
+      </main>
+
+      <p class="note" style="text-align:center;margin-top:1rem">Allow location access when prompted for the best experience.</p>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
   <script src="/static/share.js"></script>
 </body>
 </html>

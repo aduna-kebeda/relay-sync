@@ -3,37 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090b10">
   <title>Relay</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="card">
-    <h1>Relay</h1>
-    <p class="subtitle">Coordinate with your group. Everyone stays on the same page.</p>
-
-    <button id="create-room" class="btn primary">New session</button>
-
-    <div id="result" class="result hidden">
-      <h2>Session ready</h2>
-      <p><strong>Invite link</strong> — send to your group:</p>
-      <div class="copy-row">
-        <input id="share-url" readonly>
-        <button class="btn small" data-copy="share-url">Copy</button>
+  <div class="page page-center">
+    <div class="container">
+      <div class="brand">
+        <div class="brand-mark">R</div>
+        <span class="brand-name">Relay</span>
       </div>
 
-      <p><strong>Your view</strong> — open to see the group:</p>
-      <div class="copy-row">
-        <input id="admin-url" readonly>
-        <button class="btn small" data-copy="admin-url">Copy</button>
-      </div>
+      <main class="card card-glass">
+        <h1>Group sessions</h1>
+        <p class="subtitle">Start a session, invite your group, and monitor everyone in real time.</p>
 
-      <a id="open-admin" class="btn secondary" href="#">Open view</a>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-value" id="stat-sessions">0</span>
+            <span class="stat-label">Sessions</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="stat-active">—</span>
+            <span class="stat-label">Live members</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="stat-status">Ready</span>
+            <span class="stat-label">Status</span>
+          </div>
+        </div>
+
+        <button id="create-room" class="btn primary full">Start new session</button>
+        <p class="note">Sessions are saved on this device. Open your dashboard anytime to view members.</p>
+      </main>
+
+      <div id="sessions-section" class="hidden">
+        <div class="section-head">
+          <h3>Recent sessions</h3>
+          <button id="refresh-sessions" class="btn ghost small">Refresh</button>
+        </div>
+        <div id="sessions-list"></div>
+      </div>
     </div>
-
-    <p class="note">Members open the invite link on their phone to join the session.</p>
-
-    <div id="sessions-list" class="sessions-list hidden"></div>
-  </main>
+  </div>
+  <script src="/static/app.js"></script>
   <script src="/static/index.js"></script>
 </body>
 </html>

@@ -1,70 +1,106 @@
-const SESSIONS_KEY = 'relay_sessions';
+const createBtn = document.getElementById('create-room');
+const sessionsSection = document.getElementById('sessions-section');
+const sessionsList = document.getElementById('sessions-list');
+const statSessions = document.getElementById('stat-sessions');
+const statActive = document.getElementById('stat-active');
+const statStatus = document.getElementById('stat-status');
 
-function loadSessions() {
+async function fetchSessionStats(session) {
   try {
-    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
+    const res = await fetch(`/api/rooms/${session.room_id}`);
+    if (!res.ok) return { members: 0, live: 0 };
+    const data = await res.json();
+    const trackers = data.trackers || [];
+    return {
+      members: trackers.length,
+      live: trackers.filter(Relay.hasCoords).length,
+    };
   } catch {
-    return [];
+    return { members: 0, live: 0 };
   }
 }
 
-function saveSession(session) {
-  const sessions = loadSessions().filter(s => s.room_id !== session.room_id);
-  sessions.unshift({ ...session, created_at: Date.now() });
-  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.slice(0, 20)));
-}
+async function renderSessions() {
+  const sessions = Relay.sessions.load();
+  statSessions.textContent = sessions.length;
 
-function renderSessions() {
-  const list = document.getElementById('sessions-list');
-  const sessions = loadSessions();
   if (!sessions.length) {
-    list.innerHTML = '';
-    list.classList.add('hidden');
+    sessionsSection.classList.add('hidden');
+    statActive.textContent = '—';
     return;
   }
-  list.classList.remove('hidden');
-  list.innerHTML = '<h3>Your sessions</h3>';
-  for (const s of sessions) {
-    const row = document.createElement('div');
-    row.className = 'session-row';
-    row.innerHTML = `
-      <span class="session-id">${s.room_id}</span>
-      <a class="btn small" href="/admin/${s.room_id}?token=${encodeURIComponent(s.admin_token)}">Open view</a>
+
+  sessionsSection.classList.remove('hidden');
+  sessionsList.innerHTML = '';
+
+  let totalLive = 0;
+  const stats = await Promise.all(sessions.map(async (s, i) => {
+    const { members, live } = await fetchSessionStats(s);
+    totalLive += live;
+    return { session: s, members, live, index: i };
+  }));
+
+  statActive.textContent = totalLive;
+
+  for (const { session, members, live, index } of stats) {
+    const card = document.createElement('div');
+    card.className = 'session-card';
+    card.style.animationDelay = `${index * 0.05}s`;
+    const shortId = session.room_id.slice(0, 8);
+    const ago = Relay.formatTime((session.created_at || Date.now()) / 1000);
+
+    card.innerHTML = `
+      <div class="session-icon">${shortId.slice(0, 2).toUpperCase()}</div>
+      <div class="session-info">
+        <div class="session-title">Session ${shortId}</div>
+        <div class="session-meta">${members} member${members !== 1 ? 's' : ''} · ${live} live · ${ago}</div>
+      </div>
+      <div class="session-actions">
+        <button class="btn ghost small" data-copy-share="${session.room_id}" title="Copy invite">Link</button>
+        <a class="btn primary small" href="/admin/${session.room_id}?token=${encodeURIComponent(session.admin_token)}">Open</a>
+        <button class="btn ghost small" data-remove="${session.room_id}" title="Remove">✕</button>
+      </div>
     `;
-    list.appendChild(row);
+    sessionsList.appendChild(card);
   }
+
+  sessionsList.querySelectorAll('[data-copy-share]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      Relay.copy(`${location.origin}/share/${btn.dataset.copyShare}`, 'Invite link copied');
+    });
+  });
+
+  sessionsList.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      Relay.sessions.remove(btn.dataset.remove);
+      Relay.toast('Session removed', 'info');
+      renderSessions();
+    });
+  });
 }
 
-const createBtn = document.getElementById('create-room');
-const result = document.getElementById('result');
-
 createBtn.addEventListener('click', async () => {
-  createBtn.disabled = true;
-  createBtn.textContent = 'Creating…';
+  Relay.setLoading(createBtn, true, 'Start new session', 'Creating…');
+  statStatus.textContent = 'Creating';
   try {
     const res = await fetch('/api/rooms', { method: 'POST' });
+    if (!res.ok) throw new Error('Could not create session');
     const data = await res.json();
-    saveSession(data);
-    document.getElementById('share-url').value = data.share_url;
-    document.getElementById('admin-url').value = data.admin_url;
-    document.getElementById('open-admin').href = data.admin_url;
-    result.classList.remove('hidden');
-    renderSessions();
+    Relay.sessions.save(data);
+    Relay.toast('Session created', 'success');
     window.location.href = data.admin_url;
+  } catch (e) {
+    Relay.toast(e.message || 'Something went wrong', 'error');
+    statStatus.textContent = 'Error';
   } finally {
-    createBtn.disabled = false;
-    createBtn.textContent = 'New session';
+    Relay.setLoading(createBtn, false, 'Start new session');
   }
 });
 
-document.querySelectorAll('[data-copy]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const input = document.getElementById(btn.dataset.copy);
-    input.select();
-    navigator.clipboard.writeText(input.value);
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-  });
+document.getElementById('refresh-sessions').addEventListener('click', () => {
+  statStatus.textContent = 'Refreshing';
+  renderSessions().then(() => { statStatus.textContent = 'Ready'; });
 });
 
 renderSessions();
+setInterval(renderSessions, 15000);

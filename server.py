@@ -27,13 +27,14 @@ def _load_state() -> None:
     try:
         data = json.loads(STATE_FILE.read_text())
         room_tokens.update(data.get("room_tokens", {}))
+        room_meta.update(data.get("room_meta", {}))
     except Exception:
         pass
 
 
 def _save_state() -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps({"room_tokens": room_tokens}))
+    STATE_FILE.write_text(json.dumps({"room_tokens": room_tokens, "room_meta": room_meta}))
 
 
 def _valid_admin_token(room_id: str, token: str) -> bool:
@@ -60,6 +61,8 @@ app = FastAPI(title="Relay")
 rooms: dict[str, dict[str, LocationUpdate]] = {}
 # room_id -> admin token for that session
 room_tokens: dict[str, str] = {}
+# room_id -> session metadata
+room_meta: dict[str, dict[str, float]] = {}
 # room_id -> set of admin websocket connections
 admin_connections: dict[str, set[WebSocket]] = {}
 # room_id -> set of tracker websocket connections (for optional push)
@@ -151,6 +154,7 @@ async def create_room():
     room_token = secrets.token_urlsafe(16)
     _ensure_room(room_id)
     room_tokens[room_id] = room_token
+    room_meta[room_id] = {"created_at": time.time()}
     _save_state()
     base = public_base_url()
     return CreateRoomResponse(
@@ -167,6 +171,8 @@ async def get_room(room_id: str):
     _prune_stale(room_id)
     return {
         "room_id": room_id,
+        "created_at": room_meta.get(room_id, {}).get("created_at"),
+        "member_count": len(rooms[room_id]),
         "trackers": [loc.to_dict() for loc in rooms[room_id].values()],
     }
 

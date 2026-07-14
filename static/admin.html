@@ -3,31 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Overview</title>
+  <meta name="theme-color" content="#090b10">
+  <title>Overview · Relay</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="admin-page">
   <header class="admin-header">
-    <div>
-      <h1>Overview</h1>
-      <p id="invite-link" class="invite-link hidden"></p>
+    <div class="admin-header-left">
+      <a href="/" class="brand-mark" style="text-decoration:none;width:32px;height:32px;font-size:0.8rem">R</a>
+      <div>
+        <h1>Session overview</h1>
+        <div class="session-code" id="session-code"></div>
+      </div>
     </div>
     <div class="header-meta">
-      <span id="tracker-count">0 active</span>
-      <span id="connection" class="connection">Connecting…</span>
+      <span class="header-stat" id="tracker-count">0 members</span>
+      <span id="connection" class="badge badge-offline"><span class="badge-dot"></span> Offline</span>
     </div>
   </header>
 
+  <div class="invite-bar">
+    <span style="color:var(--text-dim);flex-shrink:0">Invite</span>
+    <code id="invite-url"></code>
+    <button id="copy-invite" class="btn ghost small">Copy</button>
+    <button id="copy-share" class="btn primary small">Share link</button>
+  </div>
+
   <div class="admin-layout">
-    <aside id="sidebar" class="sidebar">
-      <p class="sidebar-empty">Waiting for members…</p>
-      <ul id="tracker-list"></ul>
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>Members · <span id="member-live-count">0</span></h2>
+      </div>
+      <div class="sidebar-scroll">
+        <div id="sidebar-empty" class="sidebar-empty">
+          <p>No members yet</p>
+          <p style="font-size:0.78rem;margin-top:0.35rem">Share the invite link to get started</p>
+        </div>
+        <div id="tracker-list"></div>
+      </div>
     </aside>
     <div id="map"></div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js"></script>
   <script src="/static/admin.js"></script>
 </body>
 </html>
