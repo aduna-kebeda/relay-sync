@@ -557,8 +557,10 @@ input[type="text"]:focus {
   background: var(--bg);
   color: var(--text-muted);
   font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
+  font-size: 16px;
   cursor: pointer;
+  -webkit-user-select: all;
+  user-select: all;
 }
 
 .invite-input:focus {

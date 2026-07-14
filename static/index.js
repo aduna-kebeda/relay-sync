@@ -65,9 +65,7 @@ async function renderSessions() {
   }
 
   sessionsList.querySelectorAll('[data-copy-share]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      Relay.copy(`${location.origin}/share/${btn.dataset.copyShare}`, 'Invite link copied');
-    });
+    Relay.bindCopyButton(btn, () => `${location.origin}/share/${btn.dataset.copyShare}`, 'Invite link copied');
   });
 
   sessionsList.querySelectorAll('[data-remove]').forEach(btn => {

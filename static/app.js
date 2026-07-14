@@ -41,50 +41,56 @@ const Relay = {
     }, 2800);
   },
 
-  writeClipboard(text) {
+  async copy(text, label = 'Copied') {
+    if (!text) {
+      Relay.toast('Nothing to copy', 'error');
+      return false;
+    }
+
+    // Clipboard API — works on HTTPS when triggered by user tap/click
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        Relay.toast(label, 'success');
+        return true;
+      } catch { /* fallback */ }
+    }
+
+    // execCommand fallback — textarea must be in viewport on iOS
     try {
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.setAttribute('readonly', '');
-      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;border:none;outline:none;box-shadow:none;background:transparent;font-size:16px;';
       document.body.appendChild(ta);
       ta.focus();
       ta.select();
       ta.setSelectionRange(0, text.length);
       const ok = document.execCommand('copy');
       document.body.removeChild(ta);
-      if (ok) return true;
-    } catch { /* fall through */ }
-    return false;
-  },
-
-  async copy(text, label = 'Copied') {
-    if (Relay.writeClipboard(text)) {
-      Relay.toast(label, 'success');
-      return true;
-    }
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
+      if (ok) {
         Relay.toast(label, 'success');
         return true;
-      } catch { /* fall through */ }
-    }
-    Relay.toast('Select the link and copy manually', 'error');
+      }
+    } catch { /* fall through */ }
+
+    Relay.toast('Tap the link field and copy manually', 'error');
     return false;
   },
 
-  selectAndCopy(inputEl, label = 'Copied') {
-    if (!inputEl?.value) return false;
+  bindCopyButton(btn, getText, label = 'Copied') {
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      void Relay.copy(typeof getText === 'function' ? getText() : getText, label);
+    });
+  },
+
+  selectInput(inputEl) {
+    if (!inputEl) return;
     inputEl.focus();
     inputEl.select();
     inputEl.setSelectionRange(0, inputEl.value.length);
-    if (Relay.writeClipboard(inputEl.value)) {
-      Relay.toast(label, 'success');
-      return true;
-    }
-    Relay.toast('Link selected — press Copy', 'info');
-    return false;
   },
 
   escapeHtml(s) {

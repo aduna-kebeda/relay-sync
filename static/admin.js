@@ -7,18 +7,23 @@ const inviteUrl = `${location.origin}/share/${roomId}`;
 const inviteInput = document.getElementById('invite-url');
 inviteInput.value = inviteUrl;
 
-inviteInput.addEventListener('click', () => Relay.selectAndCopy(inviteInput, 'Link selected'));
-inviteInput.addEventListener('focus', () => inviteInput.select());
+inviteInput.addEventListener('click', () => {
+  Relay.selectInput(inviteInput);
+  void Relay.copy(inviteUrl, 'Invite copied');
+});
+inviteInput.addEventListener('focus', () => Relay.selectInput(inviteInput));
 
-document.getElementById('copy-invite').addEventListener('click', () => Relay.selectAndCopy(inviteInput, 'Invite copied'));
-document.getElementById('copy-share').addEventListener('click', async () => {
+Relay.bindCopyButton(document.getElementById('copy-invite'), () => inviteUrl, 'Invite copied');
+
+document.getElementById('copy-share').addEventListener('click', async (e) => {
+  e.preventDefault();
   if (navigator.share) {
     try {
       await navigator.share({ title: 'Join game', url: inviteUrl });
       return;
-    } catch { /* fallback */ }
+    } catch { /* fallback to copy */ }
   }
-  Relay.selectAndCopy(inviteInput, 'Invite copied');
+  void Relay.copy(inviteUrl, 'Invite copied');
 });
 
 const trackerCount = document.getElementById('tracker-count');
