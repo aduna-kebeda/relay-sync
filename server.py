@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", secrets.token_urlsafe(16))
-STALE_SECONDS = 120
+STALE_SECONDS = 600
 STATE_FILE = Path(os.environ.get("STATE_FILE", "data/state.json"))
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "data/uploads"))
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
@@ -379,6 +379,18 @@ async def admin_websocket(websocket: WebSocket, room_id: str, token: str):
         admin_connections[room_id].discard(websocket)
 
 
+@app.post("/api/rooms/{room_id}/trackers/{tracker_id}/ping")
+async def tracker_ping(room_id: str, tracker_id: str):
+    _ensure_room(room_id)
+    tracker = rooms[room_id].get(tracker_id)
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+    tracker.updated_at = time.time()
+    _save_state()
+    await _broadcast_to_admins(room_id)
+    return {"ok": True}
+
+
 @app.websocket("/ws/track/{room_id}/{tracker_id}")
 async def tracker_websocket(websocket: WebSocket, room_id: str, tracker_id: str):
     _ensure_room(room_id)
@@ -393,7 +405,18 @@ async def tracker_websocket(websocket: WebSocket, room_id: str, tracker_id: str)
     try:
         while True:
             raw = await websocket.receive_text()
-            data = json.loads(raw)
+            if raw == "ping":
+                tracker.updated_at = time.time()
+                _save_state()
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "ping":
+                tracker.updated_at = time.time()
+                _save_state()
+                continue
             if data.get("type") != "location":
                 continue
             tracker.lat = float(data["lat"])

