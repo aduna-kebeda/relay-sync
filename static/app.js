@@ -41,15 +41,50 @@ const Relay = {
     }, 2800);
   },
 
-  async copy(text, label = 'Copied') {
+  writeClipboard(text) {
     try {
-      await navigator.clipboard.writeText(text);
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) return true;
+    } catch { /* fall through */ }
+    return false;
+  },
+
+  async copy(text, label = 'Copied') {
+    if (Relay.writeClipboard(text)) {
       Relay.toast(label, 'success');
       return true;
-    } catch {
-      Relay.toast('Copy failed', 'error');
-      return false;
     }
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        Relay.toast(label, 'success');
+        return true;
+      } catch { /* fall through */ }
+    }
+    Relay.toast('Select the link and copy manually', 'error');
+    return false;
+  },
+
+  selectAndCopy(inputEl, label = 'Copied') {
+    if (!inputEl?.value) return false;
+    inputEl.focus();
+    inputEl.select();
+    inputEl.setSelectionRange(0, inputEl.value.length);
+    if (Relay.writeClipboard(inputEl.value)) {
+      Relay.toast(label, 'success');
+      return true;
+    }
+    Relay.toast('Link selected — press Copy', 'info');
+    return false;
   },
 
   escapeHtml(s) {

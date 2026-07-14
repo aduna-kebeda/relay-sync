@@ -4,17 +4,21 @@ const token = Relay.resolveToken(roomId);
 
 document.getElementById('session-code').textContent = `ID ${roomId}`;
 const inviteUrl = `${location.origin}/share/${roomId}`;
-document.getElementById('invite-url').textContent = inviteUrl;
+const inviteInput = document.getElementById('invite-url');
+inviteInput.value = inviteUrl;
 
-document.getElementById('copy-invite').addEventListener('click', () => Relay.copy(inviteUrl, 'Invite copied'));
+inviteInput.addEventListener('click', () => Relay.selectAndCopy(inviteInput, 'Link selected'));
+inviteInput.addEventListener('focus', () => inviteInput.select());
+
+document.getElementById('copy-invite').addEventListener('click', () => Relay.selectAndCopy(inviteInput, 'Invite copied'));
 document.getElementById('copy-share').addEventListener('click', async () => {
   if (navigator.share) {
     try {
-      await navigator.share({ title: 'Relay session', url: inviteUrl });
+      await navigator.share({ title: 'Join game', url: inviteUrl });
       return;
     } catch { /* fallback */ }
   }
-  Relay.copy(inviteUrl, 'Invite copied');
+  Relay.selectAndCopy(inviteInput, 'Invite copied');
 });
 
 const trackerCount = document.getElementById('tracker-count');

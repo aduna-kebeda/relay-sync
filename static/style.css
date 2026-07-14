@@ -542,13 +542,29 @@ input[type="text"]:focus {
   font-size: 0.78rem;
 }
 
-.invite-bar code {
+.invite-label {
+  color: var(--text-dim);
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.invite-input {
   flex: 1;
+  min-width: 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
   color: var(--text-muted);
   font-family: ui-monospace, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.invite-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .admin-layout {
