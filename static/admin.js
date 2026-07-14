@@ -1,17 +1,18 @@
-const parts = window.location.pathname.split('/');
-const roomId = parts[parts.indexOf('admin') + 1] || parts.pop();
+const roomId = document.body.dataset.roomId
+  || window.location.pathname.split('/').filter(Boolean).pop()
+  || '';
 const token = Relay.resolveToken(roomId);
 
 document.getElementById('session-code').textContent = `ID ${roomId}`;
-const inviteUrl = `${location.origin}/share/${roomId}`;
 const inviteInput = document.getElementById('invite-url');
-inviteInput.value = inviteUrl;
+const inviteUrl = inviteInput?.value || `${location.origin}/share/${roomId}`;
+if (inviteInput && !inviteInput.value) inviteInput.value = inviteUrl;
 
-inviteInput.addEventListener('click', () => {
+inviteInput?.addEventListener('click', () => {
   Relay.selectInput(inviteInput);
   void Relay.copy(inviteUrl, 'Invite copied');
 });
-inviteInput.addEventListener('focus', () => Relay.selectInput(inviteInput));
+inviteInput?.addEventListener('focus', () => Relay.selectInput(inviteInput));
 
 Relay.bindCopyButton(document.getElementById('copy-invite'), () => inviteUrl, 'Invite copied');
 
@@ -84,11 +85,13 @@ function applyUpdate(data) {
   if (data.photos) updatePhotos(data.photos);
 }
 
-const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OpenStreetMap &copy; CARTO',
-  maxZoom: 19,
-}).addTo(map);
+const map = L?.map ? L.map('map', { zoomControl: true }).setView([20, 0], 2) : null;
+if (map) {
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 19,
+  }).addTo(map);
+}
 
 const markers = new Map();
 let activeMemberId = null;
@@ -136,7 +139,7 @@ function renderMemberCard(t) {
 function focusMember(id) {
   activeMemberId = id;
   const t = lastTrackers.find(x => x.tracker_id === id);
-  if (t && Relay.hasCoords(t)) {
+  if (t && Relay.hasCoords(t) && map) {
     map.setView([t.lat, t.lng], 16, { animate: true });
     markers.get(id)?.openPopup();
   }
@@ -161,7 +164,7 @@ function updateTrackers(trackers) {
       const m = markers.get(t.tracker_id);
       m.setLatLng([t.lat, t.lng]);
       m.setPopupContent(`<strong>${Relay.escapeHtml(t.name)}</strong><br><span style="opacity:0.7">${Relay.formatTime(t.updated_at)}</span>`);
-    } else {
+    } else if (map) {
       const marker = L.marker([t.lat, t.lng], { icon: makeIcon(color, true) })
         .addTo(map)
         .bindPopup(`<strong>${Relay.escapeHtml(t.name)}</strong>`);
@@ -171,14 +174,14 @@ function updateTrackers(trackers) {
 
   for (const [id, marker] of markers) {
     if (!onMap.has(id)) {
-      map.removeLayer(marker);
+      map?.removeLayer(marker);
       markers.delete(id);
     }
   }
 
-  if (live.length === 1 && !activeMemberId) {
+  if (map && live.length === 1 && !activeMemberId) {
     map.setView([live[0].lat, live[0].lng], 14, { animate: true });
-  } else if (live.length > 1 && !activeMemberId) {
+  } else if (map && live.length > 1 && !activeMemberId) {
     map.fitBounds(L.latLngBounds(live.map(t => [t.lat, t.lng])).pad(0.15), { animate: true });
   }
 }
@@ -234,4 +237,4 @@ tickTimer = setInterval(() => {
   if (lastTrackers.length) updateTrackers([...lastTrackers]);
 }, 1000);
 
-window.addEventListener('resize', () => map.invalidateSize());
+window.addEventListener('resize', () => map?.invalidateSize());

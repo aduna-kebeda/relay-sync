@@ -7,14 +7,63 @@
   <title>Overview · Relay</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    window.relayCopyInvite = function (e) {
+      if (e) e.preventDefault();
+      var input = document.getElementById('invite-url');
+      var text = input && input.value;
+      if (!text) return false;
+
+      function toast(msg) {
+        var el = document.getElementById('relay-copy-toast');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'relay-copy-toast';
+          el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#22c55e;color:#fff;padding:10px 18px;border-radius:8px;font:14px system-ui,sans-serif;z-index:99999;box-shadow:0 8px 24px rgba(0,0,0,.35)';
+          document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        el.style.display = 'block';
+        clearTimeout(el._hide);
+        el._hide = setTimeout(function () { el.style.display = 'none'; }, 2600);
+      }
+
+      function fallback() {
+        input.focus();
+        input.select();
+        try { input.setSelectionRange(0, text.length); } catch (err) {}
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;font-size:16px;opacity:0;border:none;outline:none';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { ta.setSelectionRange(0, text.length); } catch (err) {}
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (err) {}
+        document.body.removeChild(ta);
+        if (ok) toast('Invite copied');
+        return ok;
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          toast('Invite copied');
+        }).catch(fallback);
+        return true;
+      }
+      return fallback();
+    };
+  </script>
 </head>
-<body class="admin-page">
+<body class="admin-page" data-room-id="__ROOM_ID__">
   <header class="admin-header">
     <div class="admin-header-left">
       <a href="/" class="brand-mark" style="text-decoration:none;width:32px;height:32px;font-size:0.8rem">R</a>
       <div>
         <h1>Session overview</h1>
-        <div class="session-code" id="session-code"></div>
+        <div class="session-code" id="session-code">ID __ROOM_ID__</div>
       </div>
     </div>
     <div class="header-meta">
@@ -25,8 +74,8 @@
 
   <div class="invite-bar">
     <span class="invite-label">Invite</span>
-    <input id="invite-url" class="invite-input" type="text" readonly>
-    <button id="copy-invite" class="btn ghost small" type="button">Copy</button>
+    <input id="invite-url" class="invite-input" type="text" readonly value="__INVITE_URL__">
+    <button id="copy-invite" class="btn ghost small" type="button" onclick="relayCopyInvite(event)">Copy</button>
     <button id="copy-share" class="btn primary small" type="button">Share</button>
   </div>
 
@@ -63,7 +112,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=2"></script>
-  <script src="/static/admin.js?v=2"></script>
+  <script src="/static/relay-core.js?v=3"></script>
+  <script src="/static/admin.js?v=3"></script>
 </body>
 </html>

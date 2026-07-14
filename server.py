@@ -11,8 +11,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -205,9 +205,14 @@ async def share_page(room_id: str):
 
 
 @app.get("/admin/{room_id}")
-async def admin_page(room_id: str):
+async def admin_page(room_id: str, request: Request):
     _ensure_room(room_id)
-    return FileResponse("static/admin.html")
+    base = public_base_url() or str(request.base_url).rstrip("/")
+    invite_url = f"{base}/share/{room_id}"
+    html = (Path("static/admin.html").read_text()
+            .replace("__ROOM_ID__", room_id)
+            .replace("__INVITE_URL__", invite_url))
+    return HTMLResponse(html)
 
 
 @app.post("/api/rooms", response_model=CreateRoomResponse)
