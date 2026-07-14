@@ -218,7 +218,7 @@ async def share_page(room_id: str):
         html,
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate",
-            "Permissions-Policy": "geolocation=(self)",
+            "Permissions-Policy": "geolocation=(self), camera=(self)",
         },
     )
 
