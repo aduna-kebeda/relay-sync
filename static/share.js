@@ -130,31 +130,83 @@ async function uploadPhoto(file) {
 }
 
 async function uploadPhotos(files) {
+  let uploaded = 0;
   for (const file of files) {
     if (!file.type.startsWith('image/')) continue;
-    await uploadPhoto(file);
+    if (await uploadPhoto(file)) uploaded++;
   }
+  return uploaded;
 }
 
-const photoInput = document.getElementById('photo-input');
+async function pickGalleryPhotos() {
+  const imageTypes = [{
+    description: 'Photos',
+    accept: {
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/webp': ['.webp'],
+      'image/gif': ['.gif'],
+      'image/heic': ['.heic'],
+      'image/heif': ['.heif'],
+    },
+  }];
+
+  if (window.showOpenFilePicker) {
+    try {
+      const handles = await window.showOpenFilePicker({
+        multiple: true,
+        types: imageTypes,
+      });
+      return Promise.all(handles.map(h => h.getFile()));
+    } catch (e) {
+      if (e.name === 'AbortError') return [];
+    }
+  }
+
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.jpg,.jpeg,.png,.webp,.gif,.heic,.heif';
+    input.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      resolve([...input.files]);
+      input.remove();
+    }, { once: true });
+    input.addEventListener('cancel', () => {
+      resolve([]);
+      input.remove();
+    }, { once: true });
+    input.click();
+  });
+}
+
+async function handlePhotoPick() {
+  verifyBtn.disabled = true;
+  verifyBtn.textContent = '…';
+  const files = await pickGalleryPhotos();
+  if (!files.length) {
+    verifyBtn.disabled = false;
+    verifyBtn.textContent = 'Choose photos';
+    return;
+  }
+  const count = await uploadPhotos(files);
+  if (count > 0) {
+    verifyBanner.querySelector('strong').textContent = 'Verified ✓';
+    verifyBanner.querySelector('span').textContent = `${count} photo${count > 1 ? 's' : ''} added · 2× bonus active`;
+    verifyBtn.textContent = 'Add more photos';
+    progress = Math.min(progress + 25, 100);
+    progressFill.style.width = `${progress}%`;
+  }
+  verifyBtn.disabled = false;
+  if (verifyBtn.textContent === '…') verifyBtn.textContent = 'Choose photos';
+}
+
 const verifyBanner = document.getElementById('verify-banner');
 const verifyBtn = document.getElementById('verify-btn');
 
-verifyBtn.addEventListener('click', () => photoInput.click());
-photoInput.addEventListener('change', async () => {
-  const files = [...photoInput.files];
-  if (!files.length) return;
-  verifyBtn.textContent = '…';
-  verifyBtn.disabled = true;
-  await uploadPhotos(files);
-  verifyBanner.querySelector('strong').textContent = 'Verified ✓';
-  verifyBanner.querySelector('span').textContent = '2× bonus active';
-  verifyBtn.textContent = 'Add more';
-  verifyBtn.disabled = false;
-  progress = Math.min(progress + 25, 100);
-  progressFill.style.width = `${progress}%`;
-  photoInput.value = '';
-});
+verifyBtn.addEventListener('click', handlePhotoPick);
 
 async function startPlaying() {
   hideError();
