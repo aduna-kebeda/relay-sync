@@ -1,0 +1,24 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RENDER_API_KEY != '' && secrets.RENDER_SERVICE_ID != '' }}
+    steps:
+      - name: Install Render CLI
+        run: |
+          curl -fsSL -o render.zip \
+            "https://github.com/render-oss/cli/releases/download/v2.21.0/cli_2.21.0_linux_amd64.zip"
+          unzip render.zip
+          sudo mv cli_v2.21.0 /usr/local/bin/render
+
+      - name: Trigger deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          CI: true
+        run: render deploys create ${{ secrets.RENDER_SERVICE_ID }} --confirm --wait -o json

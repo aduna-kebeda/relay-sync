@@ -50,7 +50,20 @@ Create a room and send people: `http://YOUR_LAN_IP:8000/share/ROOM_ID`
 
 Share links will use your Render URL automatically via `RENDER_EXTERNAL_URL`.
 
-One-click deploy: [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+One-click deploy (connect GitHub, then click Deploy):
+
+**https://render.com/deploy?repo=https://github.com/aduna-kebeda/live-location-tracker**
+
+After deploy, open your service URL and create a room. Find `ADMIN_TOKEN` under **Environment** in the Render dashboard.
+
+### Auto-deploy on push (optional)
+
+1. Deploy once via the link above.
+2. In Render → your service → copy the **Service ID** (`srv-...`).
+3. In GitHub → repo **Settings → Secrets → Actions**, add:
+   - `RENDER_API_KEY` — from [Render Account Settings → API Keys](https://dashboard.render.com/u/settings#api-keys)
+   - `RENDER_SERVICE_ID` — your service ID
+4. Future pushes to `main` redeploy automatically.
 
 ## Push to GitHub
 
