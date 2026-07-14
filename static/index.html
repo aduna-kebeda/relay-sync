@@ -3,34 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live Location Tracker</title>
+  <title>Relay</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <main class="card">
-    <h1>Live Location Tracker</h1>
-    <p class="subtitle">Share live GPS with consent. You see everyone on a map in real time.</p>
+    <h1>Relay</h1>
+    <p class="subtitle">Coordinate with your group. Everyone stays on the same page.</p>
 
-    <button id="create-room" class="btn primary">Create tracking room</button>
+    <button id="create-room" class="btn primary">New session</button>
 
     <div id="result" class="result hidden">
-      <h2>Room created</h2>
-      <p><strong>Share link</strong> — send this to people who agree to share location:</p>
+      <h2>Session ready</h2>
+      <p><strong>Invite link</strong> — send to your group:</p>
       <div class="copy-row">
         <input id="share-url" readonly>
         <button class="btn small" data-copy="share-url">Copy</button>
       </div>
 
-      <p><strong>Admin dashboard</strong> — open this to see live locations:</p>
+      <p><strong>Your view</strong> — open to see the group:</p>
       <div class="copy-row">
         <input id="admin-url" readonly>
         <button class="btn small" data-copy="admin-url">Copy</button>
       </div>
 
-      <a id="open-admin" class="btn secondary" href="#">Open dashboard</a>
+      <a id="open-admin" class="btn secondary" href="#">Open view</a>
     </div>
 
-    <p class="note">People must open the share link on their phone and allow location access. Only use with consent.</p>
+    <p class="note">Members open the invite link on their phone to join the session.</p>
   </main>
   <script>
     const createBtn = document.getElementById('create-room');
@@ -48,7 +48,7 @@
         result.classList.remove('hidden');
       } finally {
         createBtn.disabled = false;
-        createBtn.textContent = 'Create tracking room';
+        createBtn.textContent = 'New session';
       }
     });
 

@@ -31,7 +31,7 @@ function formatTime(ts) {
 
 function updateTrackers(trackers) {
   const active = trackers.filter(t => t.lat !== 0 || t.lng !== 0);
-  trackerCount.textContent = `${active.length} ${active.length === 1 ? 'person' : 'people'}`;
+  trackerCount.textContent = `${active.length} active`;
   sidebarEmpty.classList.toggle('hidden', active.length > 0);
   trackerList.innerHTML = '';
 

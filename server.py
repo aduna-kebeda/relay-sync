@@ -1,4 +1,4 @@
-"""Live location sharing server."""
+"""Relay coordination server."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def public_base_url() -> str:
         or "http://localhost:8000"
     )
 
-app = FastAPI(title="Live Location Tracker")
+app = FastAPI(title="Relay")
 
 # room_id -> { tracker_id -> LocationUpdate }
 rooms: dict[str, dict[str, LocationUpdate]] = {}

@@ -33,7 +33,7 @@ function stopSharing() {
   trackerId = null;
   sharing.classList.add('hidden');
   joinForm.classList.remove('hidden');
-  statusText.textContent = 'Sharing live location…';
+  statusText.textContent = 'Connected…';
 }
 
 async function startSharing() {
@@ -83,8 +83,8 @@ async function startSharing() {
           }
         },
         (err) => {
-          statusText.textContent = 'Location error — check permissions';
-          showError(err.message || 'Could not get location.');
+          statusText.textContent = 'Permission needed';
+          showError(err.message || 'Could not connect.');
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
       );

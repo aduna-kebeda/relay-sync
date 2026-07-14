@@ -3,28 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Share Location</title>
+  <title>Check in</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="share-page">
   <main class="card">
-    <h1>Share your location</h1>
-    <p class="subtitle">Your live GPS is sent to the room organizer only while this page is open.</p>
+    <h1>Check in</h1>
+    <p class="subtitle">Join the session. Stay connected while this page is open.</p>
 
     <div id="join-form">
       <label for="name">Your name</label>
       <input id="name" type="text" placeholder="e.g. Alex" maxlength="64" autocomplete="name">
-      <button id="start-btn" class="btn primary full">Start sharing</button>
+      <button id="start-btn" class="btn primary full">Join session</button>
     </div>
 
     <div id="sharing" class="hidden">
       <div class="status sharing-active">
         <span class="dot"></span>
-        <span id="status-text">Sharing live location…</span>
+        <span id="status-text">Connected…</span>
       </div>
       <p id="coords" class="coords"></p>
       <p id="person-name" class="person-name"></p>
-      <button id="stop-btn" class="btn secondary full">Stop sharing</button>
+      <button id="stop-btn" class="btn secondary full">Leave session</button>
     </div>
 
     <div id="error" class="error hidden"></div>
