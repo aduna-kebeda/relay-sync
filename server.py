@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,6 +19,9 @@ from pydantic import BaseModel, Field
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", secrets.token_urlsafe(16))
 STALE_SECONDS = 120
 STATE_FILE = Path(os.environ.get("STATE_FILE", "data/state.json"))
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "data/uploads"))
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"}
 
 
 def _save_state() -> None:
@@ -34,6 +37,7 @@ def _save_state() -> None:
                 "room_tokens": room_tokens,
                 "room_meta": room_meta,
                 "trackers": trackers_data,
+                "photos": photos,
             }
         )
     )
@@ -46,6 +50,8 @@ def _load_state() -> None:
         data = json.loads(STATE_FILE.read_text())
         room_tokens.update(data.get("room_tokens", {}))
         room_meta.update(data.get("room_meta", {}))
+        photos.clear()
+        photos.extend(data.get("photos", []))
         for room_id, room_trackers in data.get("trackers", {}).items():
             _ensure_room(room_id)
             now = time.time()
@@ -94,6 +100,32 @@ room_meta: dict[str, dict[str, float]] = {}
 admin_connections: dict[str, set[WebSocket]] = {}
 # room_id -> set of tracker websocket connections (for optional push)
 tracker_connections: dict[str, dict[str, WebSocket]] = {}
+# uploaded photos metadata (persisted)
+photos: list[dict[str, Any]] = []
+
+
+@dataclass
+class PhotoRecord:
+    photo_id: str
+    room_id: str
+    tracker_id: str
+    name: str
+    filename: str
+    uploaded_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _room_photos(room_id: str) -> list[dict[str, Any]]:
+    return [p for p in photos if p["room_id"] == room_id]
+
+
+def _photo_by_id(room_id: str, photo_id: str) -> dict[str, Any] | None:
+    for p in photos:
+        if p["room_id"] == room_id and p["photo_id"] == photo_id:
+            return p
+    return None
 
 
 @dataclass
@@ -147,8 +179,9 @@ def _prune_stale(room_id: str) -> None:
 async def _broadcast_to_admins(room_id: str) -> None:
     _prune_stale(room_id)
     payload = {
-        "type": "locations",
+        "type": "update",
         "trackers": [loc.to_dict() for loc in rooms.get(room_id, {}).values()],
+        "photos": _room_photos(room_id),
     }
     dead: list[WebSocket] = []
     for ws in admin_connections.get(room_id, set()):
@@ -203,6 +236,7 @@ async def get_room(room_id: str):
         "created_at": room_meta.get(room_id, {}).get("created_at"),
         "member_count": len(rooms[room_id]),
         "trackers": [loc.to_dict() for loc in rooms[room_id].values()],
+        "photos": _room_photos(room_id),
     }
 
 
@@ -249,6 +283,68 @@ async def update_location(room_id: str, tracker_id: str, body: LocationPayload):
     return {"ok": True}
 
 
+@app.post("/api/rooms/{room_id}/trackers/{tracker_id}/photos")
+async def upload_photo(
+    room_id: str,
+    tracker_id: str,
+    file: UploadFile = File(...),
+):
+    _ensure_room(room_id)
+    tracker = rooms[room_id].get(tracker_id)
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Images only")
+
+    ext = Path(file.filename or "photo.jpg").suffix.lower()
+    if ext not in ALLOWED_EXT:
+        ext = ".jpg"
+
+    raw = await file.read()
+    if len(raw) > MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
+    photo_id = secrets.token_urlsafe(10)
+    filename = f"{photo_id}{ext}"
+    dest_dir = UPLOAD_DIR / room_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / filename).write_bytes(raw)
+
+    record = PhotoRecord(
+        photo_id=photo_id,
+        room_id=room_id,
+        tracker_id=tracker_id,
+        name=tracker.name,
+        filename=filename,
+    )
+    photos.append(record.to_dict())
+    _save_state()
+    await _broadcast_to_admins(room_id)
+    return {"ok": True, "photo_id": photo_id}
+
+
+@app.get("/api/rooms/{room_id}/photos")
+async def list_photos(room_id: str, token: str):
+    _ensure_room(room_id)
+    if not _valid_admin_token(room_id, token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return {"photos": _room_photos(room_id)}
+
+
+@app.get("/api/rooms/{room_id}/photos/{photo_id}/file")
+async def get_photo_file(room_id: str, photo_id: str, token: str):
+    if not _valid_admin_token(room_id, token):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    record = _photo_by_id(room_id, photo_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Not found")
+    path = UPLOAD_DIR / room_id / record["filename"]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File missing")
+    return FileResponse(path)
+
+
 @app.websocket("/ws/admin/{room_id}")
 async def admin_websocket(websocket: WebSocket, room_id: str, token: str):
     _ensure_room(room_id)
@@ -263,8 +359,9 @@ async def admin_websocket(websocket: WebSocket, room_id: str, token: str):
     try:
         await websocket.send_json(
             {
-                "type": "locations",
+                "type": "update",
                 "trackers": [loc.to_dict() for loc in rooms[room_id].values()],
+                "photos": _room_photos(room_id),
             }
         )
         while True:
@@ -306,6 +403,7 @@ async def tracker_websocket(websocket: WebSocket, room_id: str, tracker_id: str)
 
 @app.on_event("startup")
 async def startup():
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     _load_state()
 
     async def prune_loop():

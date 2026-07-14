@@ -22,10 +22,62 @@ document.getElementById('copy-share').addEventListener('click', async () => {
 });
 
 const trackerCount = document.getElementById('tracker-count');
-const memberLiveCount = document.getElementById('member-live-count');
 const connectionEl = document.getElementById('connection');
 const trackerList = document.getElementById('tracker-list');
 const sidebarEmpty = document.getElementById('sidebar-empty');
+const photoGrid = document.getElementById('photo-grid');
+const photosEmpty = document.getElementById('photos-empty');
+const photoCountEl = document.getElementById('photo-count');
+const lightbox = document.getElementById('lightbox');
+const lightboxImg = document.getElementById('lightbox-img');
+const lightboxMeta = document.getElementById('lightbox-meta');
+
+document.querySelectorAll('.sidebar-tabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.sidebar-tabs .tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const isPhotos = tab.dataset.tab === 'photos';
+    document.getElementById('panel-members').classList.toggle('hidden', isPhotos);
+    document.getElementById('panel-photos').classList.toggle('hidden', !isPhotos);
+  });
+});
+
+document.getElementById('lightbox-close').addEventListener('click', () => lightbox.classList.add('hidden'));
+lightbox.addEventListener('click', (e) => { if (e.target === lightbox) lightbox.classList.add('hidden'); });
+
+function photoUrl(photoId) {
+  return `/api/rooms/${roomId}/photos/${photoId}/file?token=${encodeURIComponent(token)}`;
+}
+
+function updatePhotos(photoList) {
+  photoCountEl.textContent = photoList.length;
+  photosEmpty.classList.toggle('hidden', photoList.length > 0);
+  photoGrid.innerHTML = '';
+
+  const sorted = [...photoList].sort((a, b) => b.uploaded_at - a.uploaded_at);
+  for (const p of sorted) {
+    const item = document.createElement('div');
+    item.className = 'photo-item';
+    item.innerHTML = `
+      <img src="${photoUrl(p.photo_id)}" alt="${Relay.escapeHtml(p.name)}" loading="lazy">
+      <div class="photo-item-meta">
+        <span>${Relay.escapeHtml(p.name)}</span>
+        <span>${Relay.formatTime(p.uploaded_at)}</span>
+      </div>
+    `;
+    item.addEventListener('click', () => {
+      lightboxImg.src = photoUrl(p.photo_id);
+      lightboxMeta.textContent = `${p.name} · ${Relay.formatTime(p.uploaded_at)}`;
+      lightbox.classList.remove('hidden');
+    });
+    photoGrid.appendChild(item);
+  }
+}
+
+function applyUpdate(data) {
+  if (data.trackers) updateTrackers(data.trackers);
+  if (data.photos) updatePhotos(data.photos);
+}
 
 const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -89,8 +141,7 @@ function focusMember(id) {
 function updateTrackers(trackers) {
   lastTrackers = trackers;
   const live = trackers.filter(Relay.hasCoords);
-  trackerCount.textContent = `${trackers.length} member${trackers.length !== 1 ? 's' : ''}`;
-  memberLiveCount.textContent = live.length;
+  trackerCount.textContent = `${trackers.length} member${trackers.length !== 1 ? 's' : ''} · ${live.length} live`;
   sidebarEmpty.classList.toggle('hidden', trackers.length > 0);
   trackerList.innerHTML = '';
 
@@ -132,7 +183,7 @@ async function pollTrackers() {
     const res = await fetch(`/api/rooms/${roomId}`);
     if (!res.ok) return;
     const data = await res.json();
-    updateTrackers(data.trackers || []);
+    applyUpdate(data);
   } catch { /* ignore */ }
 }
 
@@ -156,7 +207,7 @@ function connect() {
 
   ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
-    if (data.type === 'locations') updateTrackers(data.trackers);
+    if (data.type === 'update' || data.type === 'locations') applyUpdate(data);
   };
 
   ws.onclose = () => {

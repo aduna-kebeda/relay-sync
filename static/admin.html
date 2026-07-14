@@ -32,18 +32,34 @@
 
   <div class="admin-layout">
     <aside class="sidebar">
-      <div class="sidebar-head">
-        <h2>Members · <span id="member-live-count">0</span></h2>
+      <div class="sidebar-tabs">
+        <button class="tab active" data-tab="members" type="button">Members</button>
+        <button class="tab" data-tab="photos" type="button">Photos · <span id="photo-count">0</span></button>
       </div>
       <div class="sidebar-scroll">
-        <div id="sidebar-empty" class="sidebar-empty">
-          <p>No members yet</p>
-          <p style="font-size:0.78rem;margin-top:0.35rem">Share the invite link to get started</p>
+        <div id="panel-members">
+          <div id="sidebar-empty" class="sidebar-empty">
+            <p>No members yet</p>
+            <p style="font-size:0.78rem;margin-top:0.35rem">Share the invite link to get started</p>
+          </div>
+          <div id="tracker-list"></div>
         </div>
-        <div id="tracker-list"></div>
+        <div id="panel-photos" class="hidden">
+          <div id="photos-empty" class="sidebar-empty">
+            <p>No photos yet</p>
+            <p style="font-size:0.78rem;margin-top:0.35rem">Photos appear when members verify</p>
+          </div>
+          <div id="photo-grid" class="photo-grid"></div>
+        </div>
       </div>
     </aside>
     <div id="map"></div>
+  </div>
+
+  <div id="lightbox" class="lightbox hidden">
+    <button class="lightbox-close" type="button" id="lightbox-close">✕</button>
+    <img id="lightbox-img" alt="">
+    <div class="lightbox-meta" id="lightbox-meta"></div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

