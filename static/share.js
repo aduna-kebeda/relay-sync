@@ -11,6 +11,7 @@ const personNameEl = document.getElementById('person-name');
 let watchId = null;
 let ws = null;
 let trackerId = null;
+let trackerName = null;
 
 function showError(msg) {
   errorEl.textContent = msg;
@@ -31,9 +32,24 @@ function stopSharing() {
     ws = null;
   }
   trackerId = null;
+  trackerName = null;
   sharing.classList.add('hidden');
   joinForm.classList.remove('hidden');
   statusText.textContent = 'Connected…';
+}
+
+async function sendLocation(lat, lng, accuracy) {
+  if (!trackerId) return;
+  const payload = { lat, lng, accuracy };
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'location', ...payload }));
+    return;
+  }
+  await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 }
 
 async function startSharing() {
@@ -60,6 +76,7 @@ async function startSharing() {
     if (!joinRes.ok) throw new Error('Could not join room.');
     const { tracker_id } = await joinRes.json();
     trackerId = tracker_id;
+    trackerName = name;
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${location.host}/ws/track/${roomId}/${trackerId}`);
@@ -73,14 +90,7 @@ async function startSharing() {
         (pos) => {
           const { latitude, longitude, accuracy } = pos.coords;
           coordsEl.textContent = `${latitude.toFixed(6)}, ${longitude.toFixed(6)} (±${Math.round(accuracy)}m)`;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'location',
-              lat: latitude,
-              lng: longitude,
-              accuracy,
-            }));
-          }
+          sendLocation(latitude, longitude, accuracy);
         },
         (err) => {
           statusText.textContent = 'Permission needed';
@@ -91,7 +101,12 @@ async function startSharing() {
     };
 
     ws.onclose = () => {
-      statusText.textContent = 'Disconnected';
+      statusText.textContent = 'Reconnecting…';
+      setTimeout(() => {
+        if (!trackerId) return;
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${location.host}/ws/track/${roomId}/${trackerId}`);
+      }, 2000);
     };
   } catch (e) {
     showError(e.message || 'Something went wrong.');
@@ -104,3 +119,7 @@ startBtn.addEventListener('click', startSharing);
 stopBtn.addEventListener('click', stopSharing);
 
 window.addEventListener('beforeunload', stopSharing);
+
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+}, 25000);

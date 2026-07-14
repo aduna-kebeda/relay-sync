@@ -31,36 +31,9 @@
     </div>
 
     <p class="note">Members open the invite link on their phone to join the session.</p>
+
+    <div id="sessions-list" class="sessions-list hidden"></div>
   </main>
-  <script>
-    const createBtn = document.getElementById('create-room');
-    const result = document.getElementById('result');
-
-    createBtn.addEventListener('click', async () => {
-      createBtn.disabled = true;
-      createBtn.textContent = 'Creating…';
-      try {
-        const res = await fetch('/api/rooms', { method: 'POST' });
-        const data = await res.json();
-        document.getElementById('share-url').value = data.share_url;
-        document.getElementById('admin-url').value = data.admin_url;
-        document.getElementById('open-admin').href = data.admin_url;
-        result.classList.remove('hidden');
-      } finally {
-        createBtn.disabled = false;
-        createBtn.textContent = 'New session';
-      }
-    });
-
-    document.querySelectorAll('[data-copy]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const input = document.getElementById(btn.dataset.copy);
-        input.select();
-        navigator.clipboard.writeText(input.value);
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-      });
-    });
-  </script>
+  <script src="/static/index.js"></script>
 </body>
 </html>

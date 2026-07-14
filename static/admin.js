@@ -1,6 +1,23 @@
 const parts = window.location.pathname.split('/');
 const roomId = parts[parts.indexOf('admin') + 1] || parts.pop();
-const token = new URLSearchParams(window.location.search).get('token');
+const SESSIONS_KEY = 'relay_sessions';
+
+function resolveToken() {
+  const fromUrl = new URLSearchParams(window.location.search).get('token');
+  if (fromUrl) return fromUrl;
+  try {
+    const sessions = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
+    const match = sessions.find(s => s.room_id === roomId);
+    if (match?.admin_token) return match.admin_token;
+  } catch { /* ignore */ }
+  return null;
+}
+
+const token = resolveToken();
+
+const inviteEl = document.getElementById('invite-link');
+inviteEl.innerHTML = `Invite: <a href="/share/${roomId}">${location.origin}/share/${roomId}</a>`;
+inviteEl.classList.remove('hidden');
 
 const trackerCount = document.getElementById('tracker-count');
 const connectionEl = document.getElementById('connection');
@@ -29,21 +46,29 @@ function formatTime(ts) {
   return `${Math.floor(sec / 60)}m ago`;
 }
 
+function hasCoords(t) {
+  return t.lat !== 0 || t.lng !== 0;
+}
+
 function updateTrackers(trackers) {
-  const active = trackers.filter(t => t.lat !== 0 || t.lng !== 0);
-  trackerCount.textContent = `${active.length} active`;
-  sidebarEmpty.classList.toggle('hidden', active.length > 0);
+  trackerCount.textContent = `${trackers.length} connected`;
+  sidebarEmpty.classList.toggle('hidden', trackers.length > 0);
   trackerList.innerHTML = '';
 
-  const seen = new Set();
-  for (const t of active) {
-    seen.add(t.tracker_id);
+  const onMap = new Set();
+  for (const t of trackers) {
+    const located = hasCoords(t);
     const li = document.createElement('li');
     li.innerHTML = `
       <div class="name" style="color:${colorFor(t.tracker_id)}">${escapeHtml(t.name)}</div>
-      <div class="meta">${t.lat.toFixed(5)}, ${t.lng.toFixed(5)} · ${formatTime(t.updated_at)}</div>
+      <div class="meta">${located
+        ? `${t.lat.toFixed(5)}, ${t.lng.toFixed(5)} · ${formatTime(t.updated_at)}`
+        : `Connected · ${formatTime(t.updated_at)}`}</div>
     `;
     trackerList.appendChild(li);
+
+    if (!located) continue;
+    onMap.add(t.tracker_id);
 
     const color = colorFor(t.tracker_id);
     if (markers.has(t.tracker_id)) {
@@ -65,16 +90,17 @@ function updateTrackers(trackers) {
   }
 
   for (const [id, marker] of markers) {
-    if (!seen.has(id)) {
+    if (!onMap.has(id)) {
       map.removeLayer(marker);
       markers.delete(id);
     }
   }
 
-  if (active.length === 1) {
-    map.setView([active[0].lat, active[0].lng], 15);
-  } else if (active.length > 1) {
-    const bounds = L.latLngBounds(active.map(t => [t.lat, t.lng]));
+  const located = trackers.filter(hasCoords);
+  if (located.length === 1) {
+    map.setView([located[0].lat, located[0].lng], 15);
+  } else if (located.length > 1) {
+    const bounds = L.latLngBounds(located.map(t => [t.lat, t.lng]));
     map.fitBounds(bounds.pad(0.2));
   }
 }
@@ -85,19 +111,34 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+let ws = null;
+let pollTimer = null;
+
+async function pollTrackers() {
+  try {
+    const res = await fetch(`/api/rooms/${roomId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    updateTrackers(data.trackers || []);
+  } catch { /* ignore */ }
+}
+
 function connect() {
   if (!token) {
-    connectionEl.textContent = 'Missing admin token';
+    connectionEl.textContent = 'No session token';
     connectionEl.className = 'connection disconnected';
+    pollTrackers();
+    pollTimer = setInterval(pollTrackers, 3000);
     return;
   }
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${protocol}//${location.host}/ws/admin/${roomId}?token=${encodeURIComponent(token)}`);
+  ws = new WebSocket(`${protocol}//${location.host}/ws/admin/${roomId}?token=${encodeURIComponent(token)}`);
 
   ws.onopen = () => {
     connectionEl.textContent = 'Live';
     connectionEl.className = 'connection connected';
+    pollTrackers();
   };
 
   ws.onmessage = (ev) => {
@@ -110,6 +151,12 @@ function connect() {
     connectionEl.className = 'connection disconnected';
     setTimeout(connect, 2000);
   };
+
+  pollTimer = setInterval(pollTrackers, 5000);
 }
 
 connect();
+
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
+}, 25000);

@@ -123,6 +123,34 @@ input[type="text"] {
   line-height: 1.4;
 }
 
+.sessions-list {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #2a3548;
+}
+
+.sessions-list h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: #9aa8bc;
+}
+
+.session-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  gap: 0.5rem;
+}
+
+.session-id {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #9aa8bc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Share page */
 .share-page .status {
   display: flex;
@@ -198,6 +226,16 @@ input[type="text"] {
 
 .connection.connected { color: #22c55e; }
 .connection.disconnected { color: #ef4444; }
+
+.invite-link {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: #9aa8bc;
+}
+
+.invite-link a {
+  color: #3b82f6;
+}
 
 .admin-layout {
   display: flex;

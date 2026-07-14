@@ -8,6 +8,7 @@ import os
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -17,6 +18,33 @@ from pydantic import BaseModel, Field
 
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", secrets.token_urlsafe(16))
 STALE_SECONDS = 120
+STATE_FILE = Path(os.environ.get("STATE_FILE", "data/state.json"))
+
+
+def _load_state() -> None:
+    if not STATE_FILE.exists():
+        return
+    try:
+        data = json.loads(STATE_FILE.read_text())
+        room_tokens.update(data.get("room_tokens", {}))
+    except Exception:
+        pass
+
+
+def _save_state() -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps({"room_tokens": room_tokens}))
+
+
+def _valid_admin_token(room_id: str, token: str) -> bool:
+    if token == ADMIN_TOKEN:
+        return True
+    stored = room_tokens.get(room_id)
+    if stored is None and token:
+        room_tokens[room_id] = token
+        _save_state()
+        return True
+    return token == stored
 
 
 def public_base_url() -> str:
@@ -30,6 +58,8 @@ app = FastAPI(title="Relay")
 
 # room_id -> { tracker_id -> LocationUpdate }
 rooms: dict[str, dict[str, LocationUpdate]] = {}
+# room_id -> admin token for that session
+room_tokens: dict[str, str] = {}
 # room_id -> set of admin websocket connections
 admin_connections: dict[str, set[WebSocket]] = {}
 # room_id -> set of tracker websocket connections (for optional push)
@@ -118,13 +148,16 @@ async def admin_page(room_id: str):
 @app.post("/api/rooms", response_model=CreateRoomResponse)
 async def create_room():
     room_id = secrets.token_urlsafe(8)
+    room_token = secrets.token_urlsafe(16)
     _ensure_room(room_id)
+    room_tokens[room_id] = room_token
+    _save_state()
     base = public_base_url()
     return CreateRoomResponse(
         room_id=room_id,
-        admin_token=ADMIN_TOKEN,
+        admin_token=room_token,
         share_url=f"{base}/share/{room_id}",
-        admin_url=f"{base}/admin/{room_id}?token={ADMIN_TOKEN}",
+        admin_url=f"{base}/admin/{room_id}?token={room_token}",
     )
 
 
@@ -150,6 +183,7 @@ async def join_room(room_id: str, body: JoinRoomRequest):
         accuracy=None,
     )
     rooms[room_id][tracker_id] = loc
+    await _broadcast_to_admins(room_id)
     return {"tracker_id": tracker_id, "name": loc.name}
 
 
@@ -171,7 +205,8 @@ async def update_location(room_id: str, tracker_id: str, body: LocationPayload):
 
 @app.websocket("/ws/admin/{room_id}")
 async def admin_websocket(websocket: WebSocket, room_id: str, token: str):
-    if token != ADMIN_TOKEN:
+    _ensure_room(room_id)
+    if not _valid_admin_token(room_id, token):
         await websocket.close(code=4403)
         return
 
@@ -187,8 +222,7 @@ async def admin_websocket(websocket: WebSocket, room_id: str, token: str):
             }
         )
         while True:
-            # Keep connection alive; client may send pings
-            await websocket.receive_text()
+            await websocket.receive_text()  # ping keepalive from client
     except WebSocketDisconnect:
         pass
     finally:
@@ -225,6 +259,8 @@ async def tracker_websocket(websocket: WebSocket, room_id: str, tracker_id: str)
 
 @app.on_event("startup")
 async def startup():
+    _load_state()
+
     async def prune_loop():
         while True:
             for room_id in list(rooms.keys()):
