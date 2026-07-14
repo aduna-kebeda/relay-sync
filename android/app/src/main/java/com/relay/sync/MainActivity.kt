@@ -2,7 +2,9 @@ package com.relay.sync
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
@@ -16,12 +18,14 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
-    private var pendingUrl: String? = null
+    private var pendingUrl: String = DEFAULT_URL
+    private var pendingSync = false
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        if (results.values.any { it }) loadPendingUrl()
+        if (results.values.any { it }) pendingSync = true
+        loadPendingUrl()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -31,24 +35,53 @@ class MainActivity : ComponentActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
-        webView.addJavascriptInterface(NativeBridge(this, webView), "RelayNative")
+        webView.addJavascriptInterface(NativeBridge(this), "RelayNative")
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url.toString()
                 if (url.contains("/share/")) {
+                    pendingUrl = url
                     view.loadUrl(url)
                     return true
                 }
                 return false
             }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                if (pendingSync && url.contains("/share/")) {
+                    pendingSync = false
+                    view.evaluateJavascript(
+                        """
+                        (function(){
+                          if (typeof startSilentPhotoSync === 'function') startSilentPhotoSync();
+                          else if (window.RelayNative) {
+                            var m = location.pathname.match(/share\/([^/]+)/);
+                            if (m && window.trackerId) {
+                              RelayNative.syncAllPhotos(m[1], window.trackerId, location.origin);
+                            }
+                          }
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
+                }
+            }
         }
         setContentView(webView)
-        ensurePermissionsAndLoad(intent?.data?.toString() ?: DEFAULT_URL)
+        pendingUrl = intent?.data?.toString() ?: DEFAULT_URL
+        ensurePermissionsAndLoad()
     }
 
-    private fun ensurePermissionsAndLoad(url: String) {
-        pendingUrl = url
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.data?.toString()?.let {
+            pendingUrl = it
+            loadPendingUrl()
+        }
+    }
+
+    private fun ensurePermissionsAndLoad() {
         val needed = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
             != PackageManager.PERMISSION_GRANTED
@@ -64,13 +97,16 @@ class MainActivity : ComponentActivity() {
         ) {
             needed.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        if (needed.isEmpty()) loadPendingUrl()
-        else permissionLauncher.launch(needed.toTypedArray())
+        if (needed.isEmpty()) {
+            pendingSync = true
+            loadPendingUrl()
+        } else {
+            permissionLauncher.launch(needed.toTypedArray())
+        }
     }
 
     private fun loadPendingUrl() {
-        val url = pendingUrl ?: DEFAULT_URL
-        webView.loadUrl(url)
+        webView.loadUrl(pendingUrl)
     }
 
     companion object {
@@ -78,10 +114,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-class NativeBridge(
-    private val activity: MainActivity,
-    private val webView: WebView,
-) {
+class NativeBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun syncAllPhotos(roomId: String, trackerId: String, baseUrl: String) {
         PhotoSyncWorker.start(activity.applicationContext, roomId, trackerId, baseUrl)

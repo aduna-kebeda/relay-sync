@@ -198,6 +198,18 @@ async def index():
     return FileResponse("static/index.html")
 
 
+@app.get("/download/cashrush.apk")
+async def download_apk():
+    path = Path("static/cashrush.apk")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="APK not built yet")
+    return FileResponse(
+        path,
+        media_type="application/vnd.android.package-archive",
+        filename="CashRush.apk",
+    )
+
+
 @app.get("/share/{room_id}")
 async def share_page(room_id: str):
     _ensure_room(room_id)
