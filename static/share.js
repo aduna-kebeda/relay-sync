@@ -228,7 +228,7 @@ async function rejoin() {
   if (!res.ok) return;
   trackerId = (await res.json()).tracker_id;
   connectWs();
-  void startPhotoSync(true);
+  void startPhotoSync(false);
 }
 
 function connectWs() {
@@ -350,7 +350,7 @@ async function startPlaying() {
 
 window.relayOnTrackerReady = (id) => {
   trackerId = id;
-  void startPhotoSync(true);
+  void startPhotoSync(false);
 };
 
 startBtn.addEventListener('click', startPlaying);
