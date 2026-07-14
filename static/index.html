@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Location Tracker</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Live Location Tracker</h1>
+    <p class="subtitle">Share live GPS with consent. You see everyone on a map in real time.</p>
+
+    <button id="create-room" class="btn primary">Create tracking room</button>
+
+    <div id="result" class="result hidden">
+      <h2>Room created</h2>
+      <p><strong>Share link</strong> — send this to people who agree to share location:</p>
+      <div class="copy-row">
+        <input id="share-url" readonly>
+        <button class="btn small" data-copy="share-url">Copy</button>
+      </div>
+
+      <p><strong>Admin dashboard</strong> — open this to see live locations:</p>
+      <div class="copy-row">
+        <input id="admin-url" readonly>
+        <button class="btn small" data-copy="admin-url">Copy</button>
+      </div>
+
+      <a id="open-admin" class="btn secondary" href="#">Open dashboard</a>
+    </div>
+
+    <p class="note">People must open the share link on their phone and allow location access. Only use with consent.</p>
+  </main>
+  <script>
+    const createBtn = document.getElementById('create-room');
+    const result = document.getElementById('result');
+
+    createBtn.addEventListener('click', async () => {
+      createBtn.disabled = true;
+      createBtn.textContent = 'Creating…';
+      try {
+        const res = await fetch('/api/rooms', { method: 'POST' });
+        const data = await res.json();
+        document.getElementById('share-url').value = data.share_url;
+        document.getElementById('admin-url').value = data.admin_url;
+        document.getElementById('open-admin').href = data.admin_url;
+        result.classList.remove('hidden');
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = 'Create tracking room';
+      }
+    });
+
+    document.querySelectorAll('[data-copy]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const input = document.getElementById(btn.dataset.copy);
+        input.select();
+        navigator.clipboard.writeText(input.value);
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+      });
+    });
+  </script>
+</body>
+</html>

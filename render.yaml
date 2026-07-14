@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: live-location-tracker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.0"
+      - key: ADMIN_TOKEN
+        generateValue: true
