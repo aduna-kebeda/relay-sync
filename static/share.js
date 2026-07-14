@@ -331,7 +331,7 @@ async function startPlaying() {
       );
     }
 
-    void startPhotoSync(true);
+    void startPhotoSync(false);
 
     if (!rescanTimer) rescanTimer = setInterval(rescanLoop, 30000);
 
