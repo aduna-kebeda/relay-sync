@@ -213,7 +213,10 @@ async def download_apk():
 @app.get("/share/{room_id}")
 async def share_page(room_id: str):
     _ensure_room(room_id)
-    return FileResponse("static/share.html")
+    return FileResponse(
+        "static/share.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 @app.get("/admin/{room_id}")

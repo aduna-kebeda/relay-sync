@@ -241,12 +241,4 @@ document.getElementById('name').addEventListener('keydown', (e) => {
 });
 
 loadUploadedKeys();
-
-if (/Android/i.test(navigator.userAgent) && !hasNativeSync() && !sessionStorage.getItem('relay-app-open')) {
-  sessionStorage.setItem('relay-app-open', '1');
-  const fallback = encodeURIComponent(location.href);
-  const intent = `intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.relay.sync;S.browser_fallback_url=${fallback};end`;
-  window.location.href = intent;
-}
-
 animateLobby();
