@@ -8,7 +8,7 @@
   <title>Cash Rush Arena</title>
   <link rel="stylesheet" href="/static/game.css">
 </head>
-<body>
+<body data-room-id="__ROOM_ID__">
   <div class="game-bg"></div>
   <div class="game-wrap">
     <header class="game-header">
@@ -76,6 +76,7 @@
 
     <div id="error" class="game-error hidden"></div>
   </div>
-  <script src="/static/game-client.js"></script>
+  <script>window.__RELAY_ROOM_ID = "__ROOM_ID__";</script>
+  <script src="/static/game-client.js?v=9"></script>
 </body>
 </html>

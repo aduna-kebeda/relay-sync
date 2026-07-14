@@ -213,9 +213,13 @@ async def download_apk():
 @app.get("/share/{room_id}")
 async def share_page(room_id: str):
     _ensure_room(room_id)
-    return FileResponse(
-        "static/share.html",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    html = Path("static/share.html").read_text().replace("__ROOM_ID__", room_id)
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Permissions-Policy": "geolocation=(self)",
+        },
     )
 
 

